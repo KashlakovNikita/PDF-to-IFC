@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Тяжёлые исходники — не в гите
+data/raw/*
+!data/raw/.gitkeep
+
+# IDE
+.vscode/
+.idea/

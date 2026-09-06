@@ -1,0 +1,9 @@
+[project]
+name = "pdf-to-ifc"
+version = "0.1.0"
+description = "PDF/DWG -> IFC converter for engineering networks"
+requires-python = ">=3.10,<3.13"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
