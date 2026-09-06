@@ -124,14 +124,17 @@ def test_generate_ifc_places_node_entities_at_node_coordinates():
     assert coords == pytest.approx((150.0, 0.0, 26.7))
 
 
-def test_generate_ifc_places_pipe_at_midpoint_of_its_nodes():
+def test_generate_ifc_places_pipe_at_start_node_oriented_towards_end_node():
     file = generate_ifc_from_network(make_four_node_model())
 
     pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
-    coords = pipe.ObjectPlacement.RelativePlacement.Location.Coordinates
+    placement = pipe.ObjectPlacement.RelativePlacement
 
-    # УТ-1 (0, 0, 27.0) и Н1 (50, 0, 26.9) -> середина
-    assert coords == pytest.approx((25.0, 0.0, 26.95))
+    # УТ-1 (0, 0, 27.0) -> Н1 (50, 0, 26.9)
+    assert placement.Location.Coordinates == pytest.approx((0.0, 0.0, 27.0))
+    dx, dy, dz = (50.0, 0.0, -0.1)
+    length = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
+    assert placement.Axis.DirectionRatios == pytest.approx((dx / length, dy / length, dz / length))
 
 
 def test_generate_ifc_containment_includes_nodes_and_pipes():
@@ -160,4 +163,58 @@ def test_generate_ifc_reuses_a_provided_file():
     assert result is base_file
     assert result.by_type("IfcProject")[0].Name == "Общий каркас"
     assert len(result.by_type("IfcPipeSegment")) == 2
+
+
+# ---------------------------------------------------------------------------
+# Задача 8: базовая геометрия труб (цилиндр по DN, без BREP)
+# ---------------------------------------------------------------------------
+
+
+def test_pipe_has_swept_solid_representation_with_no_breps():
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = file.by_type("IfcPipeSegment")[0]
+
+    assert pipe.Representation is not None
+    shape_reps = pipe.Representation.Representations
+    assert len(shape_reps) == 1
+    assert shape_reps[0].RepresentationType == "SweptSolid"
+    assert file.by_type("IfcFacetedBrep") == []
+    assert file.by_type("IfcTriangulatedFaceSet") == []
+
+
+def test_pipe_solid_is_extruded_circle_with_radius_from_dn_and_depth_from_length():
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
+
+    solid = pipe.Representation.Representations[0].Items[0]
+    assert solid.is_a("IfcExtrudedAreaSolid")
+    assert solid.SweptArea.is_a("IfcCircleProfileDef")
+    # DN=426 мм -> радиус 0.213 м; length=50.0 м из parnas-подобного ребра
+    assert solid.SweptArea.Radius == pytest.approx(426 / 1000 / 2)
+    assert solid.Depth == pytest.approx(50.0)
+    assert solid.ExtrudedDirection.DirectionRatios == pytest.approx((0.0, 0.0, 1.0))
+
+
+def test_pipe_geometry_rejects_zero_length_direction():
+    model = ThermalNetworkModel(project_name="Тест")
+    model.add_node(NetworkNode(name="A", x=0, y=0, z_surface=0, z_pipe_bottom=0, node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=0, y=0, z_surface=0, z_pipe_bottom=0, node_type="chamber"))
+    # length > 0 нужен для add_edge (иначе деление на 0 в calculate_slope),
+    # а вот координаты узлов совпадают — направление трубы не определено.
+    model.add_edge(NetworkEdge(
+        start_node="A", end_node="B",
+        diameter=100, length=10.0, material="Steel", insulation="none", laying_type="underground",
+    ))
+
+    with pytest.raises(ValueError):
+        generate_ifc_from_network(model)
+
+
+def test_chambers_and_fittings_have_no_geometry_representation():
+    file = generate_ifc_from_network(make_four_node_model())
+
+    for chamber in file.by_type("IfcDistributionChamberElement"):
+        assert chamber.Representation is None
+    for fitting in file.by_type("IfcPipeFitting"):
+        assert fitting.Representation is None
 
