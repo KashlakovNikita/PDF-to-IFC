@@ -20,8 +20,10 @@ NetworkEdge представляет ОДНУ нитку трубы, а не ф�
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 
 NodeType = str  # 'chamber' (ТК), 'junction' (УТ), 'street_unit' (уличный узел)
@@ -151,3 +153,18 @@ class ThermalNetworkModel:
         for edge_data in data.get("edges", []):
             model.edges.append(NetworkEdge.from_dict(edge_data))
         return model
+
+    def to_json(self, *, indent: Optional[int] = 2) -> str:
+        """Сериализация в JSON-строку. Это и есть контракт с Треком B (задача 7)."""
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
+
+    @classmethod
+    def from_json(cls, data: str) -> "ThermalNetworkModel":
+        return cls.from_dict(json.loads(data))
+
+    def save_json(self, path: Union[str, Path]) -> None:
+        Path(path).write_text(self.to_json(), encoding="utf-8")
+
+    @classmethod
+    def load_json(cls, path: Union[str, Path]) -> "ThermalNetworkModel":
+        return cls.from_json(Path(path).read_text(encoding="utf-8"))

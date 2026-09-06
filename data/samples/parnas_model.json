@@ -1,0 +1,376 @@
+{
+  "project_name": "Парнас (тестовый датасет)",
+  "source": "Котельная Парнас-4",
+  "nodes": {
+    "УТ-1": {
+      "name": "УТ-1",
+      "x": 0.0,
+      "y": 0.0,
+      "z_surface": 27.91,
+      "z_pipe_bottom": 28.62,
+      "node_type": "street_unit"
+    },
+    "Н1": {
+      "name": "Н1",
+      "x": 50.0,
+      "y": 0.0,
+      "z_surface": 27.63,
+      "z_pipe_bottom": 28.74,
+      "node_type": "support"
+    },
+    "УК1": {
+      "name": "УК1",
+      "x": 100.0,
+      "y": 0.0,
+      "z_surface": 27.94,
+      "z_pipe_bottom": 28.69,
+      "node_type": "compensator"
+    },
+    "Н2": {
+      "name": "Н2",
+      "x": 150.0,
+      "y": 0.0,
+      "z_surface": 28.01,
+      "z_pipe_bottom": 28.64,
+      "node_type": "support"
+    },
+    "УП2": {
+      "name": "УП2",
+      "x": 200.0,
+      "y": 0.0,
+      "z_surface": 28.06,
+      "z_pipe_bottom": 26.38,
+      "node_type": "support"
+    },
+    "Н3": {
+      "name": "Н3",
+      "x": 250.0,
+      "y": 0.0,
+      "z_surface": 27.89,
+      "z_pipe_bottom": 26.24,
+      "node_type": "support"
+    },
+    "УК2": {
+      "name": "УК2",
+      "x": 300.0,
+      "y": 0.0,
+      "z_surface": 27.72,
+      "z_pipe_bottom": 26.09,
+      "node_type": "compensator"
+    },
+    "Н7": {
+      "name": "Н7",
+      "x": 350.0,
+      "y": 0.0,
+      "z_surface": 27.77,
+      "z_pipe_bottom": 25.82,
+      "node_type": "support"
+    },
+    "УК6": {
+      "name": "УК6",
+      "x": 400.0,
+      "y": 0.0,
+      "z_surface": 27.79,
+      "z_pipe_bottom": 25.85,
+      "node_type": "compensator"
+    },
+    "Н9": {
+      "name": "Н9",
+      "x": 450.0,
+      "y": 0.0,
+      "z_surface": 27.94,
+      "z_pipe_bottom": 25.77,
+      "node_type": "support"
+    },
+    "ТК-2": {
+      "name": "ТК-2",
+      "x": 500.0,
+      "y": 0.0,
+      "z_surface": 27.87,
+      "z_pipe_bottom": 25.65,
+      "node_type": "chamber"
+    },
+    "ТК-3": {
+      "name": "ТК-3",
+      "x": 550.0,
+      "y": 0.0,
+      "z_surface": 28.3,
+      "z_pipe_bottom": 26.09,
+      "node_type": "chamber"
+    },
+    "ТК-4": {
+      "name": "ТК-4",
+      "x": 600.0,
+      "y": 0.0,
+      "z_surface": 27.78,
+      "z_pipe_bottom": 25.97,
+      "node_type": "chamber"
+    }
+  },
+  "edges": [
+    {
+      "start_node": "УТ-1",
+      "end_node": "Н1",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "supply",
+      "slope": -0.002399999999999949
+    },
+    {
+      "start_node": "УТ-1",
+      "end_node": "Н1",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "return",
+      "slope": -0.002399999999999949
+    },
+    {
+      "start_node": "Н1",
+      "end_node": "УК1",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "supply",
+      "slope": 0.0009999999999999432
+    },
+    {
+      "start_node": "Н1",
+      "end_node": "УК1",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "return",
+      "slope": 0.0009999999999999432
+    },
+    {
+      "start_node": "УК1",
+      "end_node": "Н2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "supply",
+      "slope": 0.0010000000000000141
+    },
+    {
+      "start_node": "УК1",
+      "end_node": "Н2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "return",
+      "slope": 0.0010000000000000141
+    },
+    {
+      "start_node": "Н2",
+      "end_node": "УП2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "supply",
+      "slope": 0.04520000000000003
+    },
+    {
+      "start_node": "Н2",
+      "end_node": "УП2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-OC",
+      "laying_type": "overhead",
+      "branch": "return",
+      "slope": 0.04520000000000003
+    },
+    {
+      "start_node": "УП2",
+      "end_node": "Н3",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0028000000000000112
+    },
+    {
+      "start_node": "УП2",
+      "end_node": "Н3",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0028000000000000112
+    },
+    {
+      "start_node": "Н3",
+      "end_node": "УК2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0029999999999999714
+    },
+    {
+      "start_node": "Н3",
+      "end_node": "УК2",
+      "diameter": 426,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0029999999999999714
+    },
+    {
+      "start_node": "УК2",
+      "end_node": "Н7",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.005399999999999992
+    },
+    {
+      "start_node": "УК2",
+      "end_node": "Н7",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.005399999999999992
+    },
+    {
+      "start_node": "Н7",
+      "end_node": "УК6",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": -0.0006000000000000227
+    },
+    {
+      "start_node": "Н7",
+      "end_node": "УК6",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": -0.0006000000000000227
+    },
+    {
+      "start_node": "УК6",
+      "end_node": "Н9",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.001600000000000037
+    },
+    {
+      "start_node": "УК6",
+      "end_node": "Н9",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.001600000000000037
+    },
+    {
+      "start_node": "Н9",
+      "end_node": "ТК-2",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0024000000000000197
+    },
+    {
+      "start_node": "Н9",
+      "end_node": "ТК-2",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0024000000000000197
+    },
+    {
+      "start_node": "ТК-2",
+      "end_node": "ТК-3",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": -0.008800000000000025
+    },
+    {
+      "start_node": "ТК-2",
+      "end_node": "ТК-3",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": -0.008800000000000025
+    },
+    {
+      "start_node": "ТК-3",
+      "end_node": "ТК-4",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0024000000000000197
+    },
+    {
+      "start_node": "ТК-3",
+      "end_node": "ТК-4",
+      "diameter": 325,
+      "length": 50.0,
+      "material": "Steel",
+      "insulation": "PUR-PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0024000000000000197
+    }
+  ]
+}

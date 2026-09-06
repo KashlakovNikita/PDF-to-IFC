@@ -3,6 +3,16 @@ import pytest
 from pdf_to_ifc.model import NetworkNode, NetworkEdge, ThermalNetworkModel
 
 
+def make_model_with_edge() -> ThermalNetworkModel:
+    model = make_two_node_model()
+    model.add_edge(NetworkEdge(
+        start_node="УТ-1а", end_node="ТК-2",
+        diameter=400, length=145.30, material="Steel",
+        insulation="PPU+PE", laying_type="underground", branch="supply",
+    ))
+    return model
+
+
 def make_two_node_model() -> ThermalNetworkModel:
     model = ThermalNetworkModel(project_name="Тест", source="Котельная-1")
     model.add_node(NetworkNode(
@@ -105,3 +115,41 @@ def test_roundtrip_to_dict_from_dict():
     assert len(restored.edges) == len(model.edges)
     assert restored.edges[0].branch == "supply"
     assert restored.edges[0].slope == pytest.approx(model.edges[0].slope)
+
+
+def test_to_json_roundtrips_through_from_json():
+    model = make_model_with_edge()
+
+    restored = ThermalNetworkModel.from_json(model.to_json())
+
+    assert restored.to_dict() == model.to_dict()
+
+
+def test_to_json_is_valid_json_with_expected_top_level_keys():
+    import json
+
+    model = make_model_with_edge()
+    data = json.loads(model.to_json())
+
+    assert set(data.keys()) == {"project_name", "source", "nodes", "edges"}
+
+
+def test_save_json_and_load_json_roundtrip(tmp_path):
+    model = make_model_with_edge()
+    path = tmp_path / "model.json"
+
+    model.save_json(path)
+    restored = ThermalNetworkModel.load_json(path)
+
+    assert restored.to_dict() == model.to_dict()
+    assert path.read_text(encoding="utf-8") == model.to_json()
+
+
+def test_empty_model_roundtrips_through_json():
+    model = ThermalNetworkModel(project_name="Пустая модель")
+
+    restored = ThermalNetworkModel.from_json(model.to_json())
+
+    assert restored.to_dict() == model.to_dict()
+    assert restored.nodes == {}
+    assert restored.edges == []
