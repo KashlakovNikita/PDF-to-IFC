@@ -8,6 +8,39 @@ generate_ifc_from_network() (задача 7, Трек B) будет приним
 Метод validate() (проверка уклона и глубины, задача 3) сюда сознательно не
 включён — это отдельная задача поверх этой модели.
 
+Расхождение с контрактом, который был на доске Miro (задача 2 брифа)
+-------------------------------------------------------------------
+Модель отросла дальше того контракта, и это осознанно. Явно фиксируем, чем
+она от него отличается, чтобы расхождение не всплыло как сюрприз:
+
+- `branch` ("single" / "supply" / "return") — двухниточная сеть; на доске
+  было одно ребро на участок трассы, здесь их два (подача и обратка);
+- `node_type` расширен с "chamber"/"junction" до
+  "chamber" / "street_unit" / "support" / "compensator" (задача 4) и далее
+  до "valve" / "casing" / "channel" / "connection_point" — это типы, которые
+  реально есть в эталонном IFC проекта (см. ifc_export.NODE_TYPE_TO_IFC);
+- `waypoints` у NetworkEdge — промежуточные точки изгиба трассы (см. ниже);
+- `validate()` (задача 3) сюда сознательно не включён — см. BACKLOG.md.
+
+Точки изгиба трассы (waypoints)
+--------------------------------
+NetworkEdge — это нитка между двумя УЗЛАМИ сети (камерами, опорами и т.п.),
+а реальная трасса между двумя узлами не обязана быть прямой: она гнётся по
+углам поворота, которые узлами сети не являются. Из-за этого `length`
+(реальная длина трубы из спецификации) на изогнутом участке всегда БОЛЬШЕ,
+чем прямое расстояние между координатами узлов.
+
+`waypoints` — это точки (x, y, z) между start_node и end_node по порядку.
+Пустой список (значение по умолчанию) = участок прямой, поведение модели и
+IFC-экспорта в точности как до появления поля (обратная совместимость).
+
+Что важно: waypoints задают ГЕОМЕТРИЮ трассы, а `length` остаётся числом из
+спецификации. Эти две величины могут не совпадать (полилиния оцифрована по
+плану с погрешностью, спецификация округлена) — модель их намеренно не
+синхронизирует и не «чинит» одну по другой. Сравнить их можно методом
+length_mismatch(); какая из величин главнее в каждом конкретном случае —
+вопрос к инженеру, а не к коду.
+
 Нитки (branch)
 ---------------
 NetworkEdge представляет ОДНУ нитку трубы, а не физический участок трассы
@@ -21,14 +54,28 @@ NetworkEdge представляет ОДНУ нитку трубы, а не ф�
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 
-NodeType = str  # 'chamber' (ТК), 'junction' (УТ), 'street_unit' (уличный узел)
+# Полный список допустимых значений и их отображение в IFC-классы —
+# в ifc_export.NODE_TYPE_TO_IFC (единственный источник правды по типам узлов).
+NodeType = str  # 'chamber' (ТК), 'street_unit' (УТ), 'support', 'compensator',
+                # 'valve', 'casing', 'channel', 'connection_point'
 LayingType = str  # 'underground', 'underground_ducted', 'in_casing', 'overhead'
 Branch = str  # 'single' (ВК и т.п.), 'supply' / 'return' (ТС), при необходимости другие
+
+
+def _as_point(point: Sequence[float]) -> Tuple[float, float, float]:
+    """Привести точку трассы к кортежу (x, y, z) из float с внятной ошибкой на мусоре."""
+    values = tuple(point)
+    if len(values) != 3:
+        raise ValueError(
+            f"Точка трассы должна быть тройкой (x, y, z), получено {values!r}"
+        )
+    return (float(values[0]), float(values[1]), float(values[2]))
 
 
 @dataclass
@@ -76,19 +123,71 @@ class NetworkEdge:
     start_node: str
     end_node: str
     diameter: int  # DN, мм
-    length: float  # м
+    length: float  # м, из спецификации (НЕ обязано совпадать с длиной полилинии)
     material: str
     insulation: str
     laying_type: LayingType
     branch: Branch = "single"
     slope: Optional[float] = None
+    waypoints: List[Tuple[float, float, float]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Нормализовать waypoints к списку кортежей из трёх float.
+
+        Нужно потому, что после JSON-раунд-трипа точки приходят списками
+        ([x, y, z]), а из кода их удобнее задавать кортежами. Без нормализации
+        to_dict() до и после сериализации давали бы разные структуры, и
+        сравнение моделей ломалось бы на ровном месте.
+        """
+        self.waypoints = [_as_point(point) for point in self.waypoints]
 
     def calculate_slope(self, nodes: Dict[str, NetworkNode]) -> float:
-        """Уклон нитки по отметкам лотка начального и конечного узлов."""
+        """Уклон нитки по отметкам лотка начального и конечного узлов.
+
+        Считается по `length` (спецификация), а не по длине полилинии с
+        waypoints: уклон — характеристика трубы, а не её оцифровки, и менять
+        его от того, насколько точно оцифрован план, неправильно.
+        """
         start = nodes[self.start_node]
         end = nodes[self.end_node]
         self.slope = (start.z_pipe_bottom - end.z_pipe_bottom) / self.length
         return self.slope
+
+    def polyline(self, nodes: Dict[str, NetworkNode]) -> List[Tuple[float, float, float]]:
+        """Геометрия нитки как ломаная: start_node -> waypoints -> end_node.
+
+        Точки узлов берутся по отметке лотка (z_pipe_bottom) — той же, что
+        используется в ObjectPlacement узлов в IFC-экспорте. Для прямого
+        участка (waypoints пуст) возвращаются ровно две точки, то есть
+        поведение прежнее.
+        """
+        start = nodes[self.start_node]
+        end = nodes[self.end_node]
+        return [
+            (start.x, start.y, start.z_pipe_bottom),
+            *self.waypoints,
+            (end.x, end.y, end.z_pipe_bottom),
+        ]
+
+    def polyline_length(self, nodes: Dict[str, NetworkNode]) -> float:
+        """Длина ломаной из polyline() — сумма расстояний между соседними точками.
+
+        Это ГЕОМЕТРИЧЕСКАЯ длина трассы, в отличие от `length` из
+        спецификации; см. раздел про waypoints в докстринге модуля.
+        """
+        points = self.polyline(nodes)
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+
+    def length_mismatch(self, nodes: Dict[str, NetworkNode]) -> float:
+        """`length` (спецификация) минус длина ломаной, м.
+
+        Диагностика, а не проверка: положительное значение обычно означает,
+        что трасса гнётся сильнее, чем оцифровано (или что waypoints ещё не
+        проставлены), отрицательное — что оцифрованная ломаная длиннее
+        спецификации. Порогов здесь намеренно нет, их подбирают на реальных
+        данных (см. BACKLOG.md, задача 3).
+        """
+        return self.length - self.polyline_length(nodes)
 
     def to_dict(self) -> dict:
         return asdict(self)
