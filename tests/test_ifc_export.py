@@ -9,7 +9,14 @@ ifcopenshell нельзя установить в песочнице, где п�
 import ifcopenshell
 import pytest
 
-from pdf_to_ifc.ifc_export import create_minimal_project, generate_ifc_from_network, save
+import ifcopenshell.util.element
+
+from pdf_to_ifc.ifc_export import (
+    PIPE_PSET_NAME,
+    create_minimal_project,
+    generate_ifc_from_network,
+    save,
+)
 from pdf_to_ifc.model import NetworkEdge, NetworkNode, ThermalNetworkModel
 
 
@@ -424,3 +431,80 @@ def test_model_with_new_node_types_saves_and_reopens(tmp_path):
 
     assert len(reopened.by_type("IfcValve")) == 1
     assert len(reopened.by_type("IfcDistributionPort")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Задача 9: IfcPropertySet на трубах (DN, материал, изоляция, ...)
+# ---------------------------------------------------------------------------
+
+
+def pipe_pset(pipe) -> dict:
+    """Свойства трубы из набора PIPE_PSET_NAME, без служебного 'id'."""
+    import ifcopenshell.util.element
+
+    properties = dict(ifcopenshell.util.element.get_psets(pipe)[PIPE_PSET_NAME])
+    properties.pop("id", None)
+    return properties
+
+
+def test_every_pipe_gets_the_property_set():
+    file = generate_ifc_from_network(make_four_node_model())
+
+    for pipe in file.by_type("IfcPipeSegment"):
+        assert PIPE_PSET_NAME in ifcopenshell.util.element.get_psets(pipe)
+
+
+def test_pipe_pset_carries_dn_material_insulation_and_laying_type():
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
+
+    properties = pipe_pset(pipe)
+
+    assert properties["DN"] == 426  # мм, как в спецификации, а не метры геометрии
+    assert properties["Material"] == "Steel"
+    assert properties["Insulation"] == "PUR-OC"
+    assert properties["LayingType"] == "overhead"
+    assert properties["Branch"] == "supply"
+    assert properties["SourceEdge"] == "УТ-1->Н1"
+    assert properties["Slope"] == pytest.approx((27.0 - 26.9) / 50.0)
+
+
+def test_pipe_pset_does_not_invent_pressure_or_temperature():
+    """Давления и температуры в модели нет — свойства не выдумываются (задача 9)."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert "Pressure" not in properties
+    assert "Temperature" not in properties
+
+
+def test_sub_segments_carry_their_own_length_and_index_but_shared_spec_length():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    properties = [pipe_pset(p) for p in pipes]
+    diagonal = (10.0 ** 2 + 20.0 ** 2) ** 0.5
+
+    assert [p["SegmentIndex"] for p in properties] == [1, 2, 3]
+    assert {p["SegmentCount"] for p in properties} == {3}
+    assert [p["SegmentLength"] for p in properties] == pytest.approx([diagonal, 10.0, diagonal])
+    assert {p["SpecLength"] for p in properties} == {60.0}  # спецификация одна на нитку
+
+
+def test_pipe_pset_survives_save_and_reopen(tmp_path):
+    file = generate_ifc_from_network(make_four_node_model())
+    path = tmp_path / "psets.ifc"
+
+    save(file, path)
+    reopened = ifcopenshell.open(str(path))
+    pipe = next(p for p in reopened.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (return)")
+
+    assert pipe_pset(pipe)["DN"] == 426
+
+
+def test_nodes_do_not_get_the_pipe_property_set():
+    """Набор свойств трубы — только на трубах; свойства узлов не в задаче 9."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    for chamber in file.by_type("IfcDistributionChamberElement"):
+        assert PIPE_PSET_NAME not in ifcopenshell.util.element.get_psets(chamber)

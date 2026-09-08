@@ -72,6 +72,27 @@ edge.length, как было до этой задачи. Причина — тр
 терять данные спецификации. Как следствие, для прямого участка возможно
 расхождение length с геометрией; оно измеримо через
 NetworkEdge.length_mismatch() и попадает в отчёт scripts/validate_geometry.py.
+
+Задача 9 (эта): свойства труб — IfcPropertySet
+-----------------------------------------------
+На каждый IfcPipeSegment вешается один набор свойств PSET_NAME (см. константу
+ниже) со всем, что есть в доменной модели по этой нитке: DN, материал,
+изоляция, тип прокладки, нитка (подача/обратка), уклон, длины и — для
+разбитых по waypoints ниток — номер под-сегмента.
+
+Имена свойств латиницей намеренно: по ним потом пишется IDS-проверка
+(дорожная карта, Ш1), а идентификаторы удобнее держать ASCII-стабильными;
+человекочитаемые русские подписи живут в Name/ObjectType объектов, как и
+раньше. В эталонном файле свойства названы по-русски ("Труба" -> "Диаметр",
+"Отметка начала"...) — если нужна побуквенная совместимость именно с ним,
+это отдельное решение, менять его молча в коде нельзя.
+
+Давление и температура (они перечислены в задаче 9) НЕ пишутся: в доменной
+модели их нет, из спецификации они пока не извлекаются (это задачи 12-20,
+парсинг PDF). Придумывать значения нельзя — см. TODO в _assign_pipe_pset().
+Там же TODO про ГОСТ трубы: в эталоне он есть в свойстве "Наименование"
+("Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"), у нас поля под него
+в модели ещё нет.
 """
 
 from __future__ import annotations
@@ -133,6 +154,14 @@ NODE_TYPE_TO_IFC: Dict[str, tuple] = {
 NODE_TYPE_PREDEFINED_TYPE: Dict[str, str] = {
     "connection_point": "PIPE",
 }
+
+
+# Имя набора свойств труб (задача 9). Собственное, не из стандартных Pset_*:
+# стандартный Pset_PipeSegmentTypeCommon описывает ТИП трубы, а не конкретный
+# участок, и не покрывает нужные нам поля (тип прокладки, нитка, изоляция
+# в терминах проекта). Префикс PdfToIfc — чтобы в вьюере было видно, что набор
+# сгенерирован этим инструментом, а не пришёл из исходной модели.
+PIPE_PSET_NAME = "Pset_PdfToIfc_PipeSegment"
 
 
 def create_minimal_project(
@@ -303,6 +332,60 @@ def _find_body_context(file: ifcopenshell.file) -> "ifcopenshell.entity_instance
     return body_contexts[0]
 
 
+def _assign_pipe_pset(
+    file: ifcopenshell.file,
+    pipe: "ifcopenshell.entity_instance",
+    edge,
+    *,
+    segment_index: int,
+    segment_count: int,
+    segment_length_m: float,
+) -> "ifcopenshell.entity_instance":
+    """Повесить на трубу набор свойств PIPE_PSET_NAME (задача 9).
+
+    Что пишем и почему именно так:
+    - DN — целое в МИЛЛИМЕТРАХ, как в спецификации и на выносках чертежа.
+      Единицы файла метрические, поэтому величина в мм названа DN (условный
+      проход), а не Diameter: DN — это обозначение, а не измеренная длина,
+      и путать его с метровым радиусом геометрии нельзя;
+    - SpecLength — длина всей нитки из спецификации (одна на все под-сегменты);
+    - SegmentLength — длина ЭТОГО под-сегмента по геометрии; для неразбитой
+      нитки совпадает с Depth экструзии;
+    - SegmentIndex/SegmentCount — какой это по счёту под-сегмент нитки, чтобы
+      разбиение по waypoints читалось в вьюере, а не только в имени объекта;
+    - SourceEdge — "A->B", исходное ребро доменной модели.
+
+    TODO (задачи 12-20, парсинг PDF): рабочее давление и температура
+    теплоносителя. Их нет ни в NetworkEdge, ни в текущем датасете — в
+    спецификации они есть в общих данных листа, но экстрактора под них ещё нет.
+    Выдумывать значения нельзя, поэтому свойства не пишутся вовсе (пустое
+    свойство в IFC хуже отсутствующего: вьюер покажет его как заполненное).
+
+    TODO (там же): ГОСТ/марка трубы и марка изоляции одной строкой, как в
+    эталоне ("Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"). Сейчас в
+    модели есть только material="Steel" и insulation="PUR-OC" — отдельного
+    поля под обозначение по ГОСТ нет, и придумывать его в экспорте неправильно:
+    оно должно появиться в доменной модели (Трек A).
+    """
+    pset = ifcopenshell.api.run("pset.add_pset", file, product=pipe, name=PIPE_PSET_NAME)
+    properties = {
+        "DN": int(edge.diameter),
+        "Material": str(edge.material),
+        "Insulation": str(edge.insulation),
+        "LayingType": str(edge.laying_type),
+        "Branch": str(edge.branch),
+        "SpecLength": float(edge.length),
+        "SegmentLength": float(segment_length_m),
+        "SegmentIndex": int(segment_index),
+        "SegmentCount": int(segment_count),
+        "SourceEdge": f"{edge.start_node}->{edge.end_node}",
+    }
+    if edge.slope is not None:
+        properties["Slope"] = float(edge.slope)
+    ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=properties)
+    return pset
+
+
 def _create_edge_products(
     file: ifcopenshell.file,
     body_context: "ifcopenshell.entity_instance",
@@ -349,6 +432,14 @@ def _create_edge_products(
         pipe.ObjectPlacement = _oriented_placement(file, segment_start, direction)
         pipe.Representation = _pipe_body_representation(
             file, body_context, radius_m=radius_m, depth_m=depth_m
+        )
+        _assign_pipe_pset(
+            file,
+            pipe,
+            edge,
+            segment_index=index,
+            segment_count=segment_count,
+            segment_length_m=depth_m,
         )
         products.append(pipe)
 
