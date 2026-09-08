@@ -268,3 +268,57 @@ def test_reference_length_by_dn_matches_known_totals():
 
     assert sorted(k for k in totals if k) == [89, 325, 426]
     assert sum(totals.values()) == pytest.approx(1266.5, abs=0.5)
+
+
+# --- DN эталона: свойство «Диаметр» и обозначение по ГОСТ ------------------
+#
+# Регресс на найденную ошибку сводки: у 18 из 130 труб эталона свойство
+# «Диаметр» пустое, а обозначение по ГОСТ на месте. Пока разбиралось только
+# «Диаметр», эти 214.17 м уезжали в строку «не указан» и занижали длину по
+# DN 426 почти вдвое (+135% расхождения вместо фактических +27.8%).
+
+
+def test_reference_dn_falls_back_to_the_gost_designation():
+    """Ровно тот случай, что в эталоне: «Диаметр» пуст, обозначение есть."""
+    pipe = {"Наименование": "Ст 426х9,0/560 ППУ-ПЭ в изоляции по ГОСТ 30732-2020"}
+
+    assert _reference_dn(pipe) == 426
+
+
+def test_reference_dn_designation_accepts_all_three_separators():
+    """В документации встречаются русская «х», латинская «x» и знак «×»."""
+    assert _reference_dn({"Наименование": "Ст 325х8,0/450 ППУ-ПЭ"}) == 325
+    assert _reference_dn({"Наименование": "Ст 325x8,0/450 ППУ-ПЭ"}) == 325
+    assert _reference_dn({"Наименование": "Ст 325×8,0/450 ППУ-ПЭ"}) == 325
+
+
+def test_reference_dn_takes_the_diameter_property_over_the_designation():
+    """«Диаметр» — явное числовое поле, обозначение — строка от человека."""
+    pipe = {"Диаметр": "0.325", "Наименование": "Ст 426х9,0/560 ППУ-ПЭ"}
+
+    assert _reference_dn(pipe) == 325
+
+
+def test_reference_dn_is_none_when_designation_has_no_diameter():
+    assert _reference_dn({"Наименование": "Футляр стальной"}) is None
+    assert _reference_dn({"Диаметр": "", "Наименование": ""}) is None
+
+
+@needs_reference
+def test_no_reference_pipe_is_left_without_dn():
+    """После фикса строки «не указан» в сводке нет: DN есть у всех 130 труб."""
+    centerlines, _ = load_reference_centerlines(DEFAULT_REFERENCE, ("Т1", "Т2", "Т1/Т2"))
+    totals = _length_by_dn(centerlines)
+
+    assert None not in totals
+    assert len(centerlines) == 130
+
+
+@needs_reference
+def test_reference_dn426_length_includes_pipes_without_the_diameter_property():
+    """188.25 (ППУ-ОЦ) + 67.07 (ППУ-ПЭ) + 214.17 (без «Диаметра») = 469.49 м."""
+    centerlines, _ = load_reference_centerlines(DEFAULT_REFERENCE, ("Т1", "Т2", "Т1/Т2"))
+    totals = _length_by_dn(centerlines)
+
+    assert totals[426] == pytest.approx(469.49, abs=0.05)
+    assert totals[325] == pytest.approx(795.02, abs=0.05)
