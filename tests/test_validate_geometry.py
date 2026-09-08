@@ -24,6 +24,8 @@ from validate_geometry import (
     DEFAULT_REFERENCE,
     Centerline,
     _distances_to_network,
+    _length_by_dn,
+    _reference_dn,
     compare,
     load_generated_centerlines,
     load_reference_centerlines,
@@ -213,3 +215,56 @@ def test_reference_centerlines_are_straight_pipe_pieces_in_local_coordinates():
     assert all(c.radius < c.length for c in centerlines)
     assert starts[:, 0].min() > 100_000  # X в местной системе координат, не локальный ноль
     assert starts[:, 1].min() > 100_000
+
+
+# --- сводка длин по DN (итерация 1 по п.6 брифа) ---------------------------
+
+
+def test_reference_dn_is_converted_from_metres_to_millimetres():
+    """В эталоне свойство «Диаметр» — в метрах, в сводке нужен DN в мм."""
+    assert _reference_dn({"Диаметр": "0.426"}) == 426
+    assert _reference_dn({"Диаметр": 0.325}) == 325
+
+
+def test_reference_dn_is_none_when_property_is_missing_or_empty():
+    """У 18 труб эталона диаметр не заполнен — такие идут в строку «не указан»."""
+    assert _reference_dn({}) is None
+    assert _reference_dn({"Диаметр": None}) is None
+    assert _reference_dn({"Диаметр": ""}) is None
+
+
+def test_length_by_dn_groups_lengths_and_keeps_unknown_separately():
+    lines = [
+        line((0.0, 0.0, 0.0), (10.0, 0.0, 0.0)),
+        line((0.0, 0.0, 0.0), (5.0, 0.0, 0.0)),
+        line((0.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+    ]
+    lines[0].dn = 325
+    lines[1].dn = 325
+    lines[2].dn = None
+
+    totals = _length_by_dn(lines)
+
+    assert totals[325] == pytest.approx(15.0)
+    assert totals[None] == pytest.approx(3.0)
+
+
+def test_generated_centerlines_carry_dn_from_the_property_set(tmp_path):
+    """DN берётся из Pset (спецификация), а не из толщины тела."""
+    model = make_bent_model()
+    path = tmp_path / "bent.ifc"
+    save(generate_ifc_from_network(model), path)
+
+    centerlines, _ = load_generated_centerlines(path)
+
+    assert {c.dn for c in centerlines} == {325}
+
+
+@needs_reference
+def test_reference_length_by_dn_matches_known_totals():
+    """Числа эталона по DN — фиксируем как есть, чтобы заметить, если файл подменят."""
+    centerlines, _ = load_reference_centerlines(DEFAULT_REFERENCE, ("Т1", "Т2", "Т1/Т2"))
+    totals = _length_by_dn(centerlines)
+
+    assert sorted(k for k in totals if k) == [89, 325, 426]
+    assert sum(totals.values()) == pytest.approx(1266.5, abs=0.5)

@@ -80,6 +80,20 @@
 посмотреть на ФОРМУ трассы, не трогая вопрос привязки. Это диагностика, а не
 режим приёмки, и в отчёте она подписана как таковая.
 
+Сводка длин по DN (итерация 1 по п.6 брифа)
+--------------------------------------------
+Первый же прогон показал, что отклонение геометрии на текущих данных целиком
+объясняется разными системами координат (см. выше) — то есть чинить по нему
+генератор нечего, отчёт про это и говорит. Зато из тех же данных считается
+величина, от системы координат НЕ зависящая: суммарная длина труб по каждому
+условному проходу. Именно она стоит в критериях приёмки дорожной карты
+(«Суммы длин по каждому Ду: расхождение с ведомостью объёмов <= 3 %»), и её
+можно сверять уже сейчас, до появления привязки координат.
+
+Вердикт по этой сводке скрипт не выносит: 3 % из дорожной карты — критерий
+сверки с ВЕДОМОСТЬЮ ОБЪЁМОВ, а здесь сравнение идёт с эталонной моделью, и
+переносить порог с одного на другое без человека нельзя. Печатаются числа.
+
 Запуск
 -------
     python scripts/validate_geometry.py --generated out/parnas.ifc
@@ -106,6 +120,10 @@ import ifcopenshell.geom
 import ifcopenshell.util.element
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from pdf_to_ifc.ifc_export import PIPE_PSET_NAME  # noqa: E402  (после правки sys.path)
+
 DEFAULT_REFERENCE = REPO_ROOT / "data" / "raw" / "ПРНС_ЛО_ТКР-ТС_У1_Э1_I2300.ifc"
 
 # Имя IfcPropertySet, которым в эталоне помечены трубы, и имя свойства с
@@ -130,6 +148,7 @@ class Centerline:
     end: np.ndarray
     radius: float  # максимальное удаление вершин от оси, м — толщина тела
     source: str = ""
+    dn: Optional[int] = None  # условный проход, мм (из свойств, а не из геометрии)
 
     @property
     def length(self) -> float:
@@ -210,7 +229,9 @@ def _geom_settings() -> ifcopenshell.geom.settings:
     return settings
 
 
-def _centerline_from_vertices(vertices: np.ndarray, name: str, source: str) -> Optional[Centerline]:
+def _centerline_from_vertices(
+    vertices: np.ndarray, name: str, source: str, dn: Optional[int] = None
+) -> Optional[Centerline]:
     """Восстановить ось вытянутого тела из облака его вершин.
 
     Первая главная компонента (SVD) — направление оси; концы — крайние
@@ -234,7 +255,7 @@ def _centerline_from_vertices(vertices: np.ndarray, name: str, source: str) -> O
 
     residuals = centered - np.outer(projections, axis)
     radius = float(np.linalg.norm(residuals, axis=1).max())
-    return Centerline(name=name, start=start, end=end, radius=radius, source=source)
+    return Centerline(name=name, start=start, end=end, radius=radius, source=source, dn=dn)
 
 
 def _element_vertices(settings, element) -> Optional[np.ndarray]:
@@ -280,7 +301,9 @@ def load_reference_centerlines(
         label = str(pipe_pset.get("Наименование", "")).strip()
         system = str(pipe_pset.get(REFERENCE_SYSTEM_PROPERTY))
         name = f"{system} #{pipe_pset.get('id', element.id())}"
-        line = _centerline_from_vertices(vertices, name=name, source=label)
+        line = _centerline_from_vertices(
+            vertices, name=name, source=label, dn=_reference_dn(pipe_pset)
+        )
         if line is None:
             stats["geometry_failed"] += 1
             continue
@@ -307,8 +330,13 @@ def load_generated_centerlines(path: Path) -> Tuple[List[Centerline], Dict[str, 
         if vertices is None:
             stats["geometry_failed"] += 1
             continue
+        properties = ifcopenshell.util.element.get_psets(element).get(PIPE_PSET_NAME, {})
+        dn = properties.get("DN")
         line = _centerline_from_vertices(
-            vertices, name=element.Name or f"#{element.id()}", source="IfcPipeSegment"
+            vertices,
+            name=element.Name or f"#{element.id()}",
+            source="IfcPipeSegment",
+            dn=int(dn) if dn is not None else None,
         )
         if line is None:
             stats["geometry_failed"] += 1
@@ -316,6 +344,64 @@ def load_generated_centerlines(path: Path) -> Tuple[List[Centerline], Dict[str, 
         centerlines.append(line)
 
     return centerlines, stats
+
+
+def _reference_dn(pipe_pset: dict) -> Optional[int]:
+    """DN трубы эталона в мм из свойства «Диаметр» (оно там в МЕТРАХ).
+
+    У части труб эталона свойство пустое (18 из 130 по системам Т1/Т2) —
+    тогда DN неизвестен, и такая труба попадает в сводке в строку «не указан».
+    Восстанавливать DN по толщине BREP-тела нельзя: у эталона тело построено
+    по НАРУЖНОМУ диаметру изоляции (например, 560 мм оболочки при DN 426),
+    и подмена одного другим тихо исказила бы сводку длин.
+    """
+    raw = pipe_pset.get("Диаметр")
+    try:
+        millimetres = round(float(raw) * 1000.0)
+    except (TypeError, ValueError):
+        return None
+    return millimetres or None
+
+
+def _length_by_dn(lines: List[Centerline]) -> Dict[Optional[int], float]:
+    totals: Dict[Optional[int], float] = {}
+    for line in lines:
+        totals[line.dn] = totals.get(line.dn, 0.0) + line.length
+    return totals
+
+
+def _format_length_summary(
+    generated: List[Centerline], reference: List[Centerline]
+) -> List[str]:
+    """Сводка длин по DN — сверка, не зависящая от системы координат."""
+    ours = _length_by_dn(generated)
+    theirs = _length_by_dn(reference)
+    keys = sorted(set(ours) | set(theirs), key=lambda dn: (dn is None, dn))
+
+    rows = ["Длины по DN (не зависят от системы координат):",
+            f"    {'DN, мм':>8} {'наш файл, м':>13} {'эталон, м':>12} {'расхождение':>13}"]
+    for dn in keys:
+        our_length = ours.get(dn, 0.0)
+        their_length = theirs.get(dn, 0.0)
+        if their_length:
+            difference = f"{(our_length - their_length) / their_length * 100:+.1f}%"
+        else:
+            difference = "нет в эталоне"
+        label = str(dn) if dn is not None else "не указан"
+        rows.append(f"    {label:>8} {our_length:13.2f} {their_length:12.2f} {difference:>13}")
+
+    our_total = sum(ours.values())
+    their_total = sum(theirs.values())
+    total_difference = (
+        f"{(our_total - their_total) / their_total * 100:+.1f}%" if their_total else "-"
+    )
+    rows.append(f"    {'всего':>8} {our_total:13.2f} {their_total:12.2f} {total_difference:>13}")
+    rows.append(
+        "    (вердикт не выносится: 3% из дорожной карты — критерий сверки с ведомостью "
+        "объёмов,"
+    )
+    rows.append("     а здесь сравнение с эталонной моделью; перенос порога — решение человека)")
+    return rows
 
 
 def _distances_to_network(points: np.ndarray, network: List[Centerline]) -> np.ndarray:
@@ -500,6 +586,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print()
     for line in _format_direction(backward, worst=args.worst):
         print(line)
+    print()
+    for line in _format_length_summary(generated, reference):
+        print(line)
 
     if args.report_thick:
         thick = [
@@ -526,6 +615,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "generated_stats": generated_stats,
             "forward": forward.to_dict(),
             "backward": backward.to_dict(),
+            "length_by_dn": {
+                "generated": {str(k): round(v, 3) for k, v in _length_by_dn(generated).items()},
+                "reference": {str(k): round(v, 3) for k, v in _length_by_dn(reference).items()},
+            },
         }
         args.json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print()
