@@ -369,3 +369,58 @@ def test_horizontal_pipe_along_x_axis_does_not_break_placement():
     assert axis == pytest.approx((1.0, 0.0, 0.0))
     assert sum(a * r for a, r in zip(axis, ref)) == pytest.approx(0.0, abs=1e-9)
     assert sum(r * r for r in ref) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Задача 2 брифа: типы узлов из эталонного IFC (арматура, футляр, канал,
+# точка подключения к внешним сетям)
+# ---------------------------------------------------------------------------
+
+
+def make_reference_node_types_model() -> ThermalNetworkModel:
+    model = ThermalNetworkModel(project_name="Типы узлов эталона")
+    model.add_node(NetworkNode(name="ЗД-1", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="valve"))
+    model.add_node(NetworkNode(name="Ф-1", x=10.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="casing"))
+    model.add_node(NetworkNode(name="КН-1", x=20.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="channel"))
+    model.add_node(NetworkNode(name="ТВ-1", x=30.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="connection_point"))
+    return model
+
+
+def test_valve_casing_channel_and_connection_point_get_their_ifc_classes():
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    assert [v.Name for v in file.by_type("IfcValve")] == ["ЗД-1"]
+    assert "Ф-1" in {f.Name for f in file.by_type("IfcPipeFitting")}
+    assert "КН-1" in {c.Name for c in file.by_type("IfcDistributionChamberElement")}
+    assert [p.Name for p in file.by_type("IfcDistributionPort")] == ["ТВ-1"]
+
+
+def test_connection_point_port_gets_pipe_predefined_type_not_userdefined():
+    """У порта PredefinedType — тип среды (PIPE), а не 'тип объекта'."""
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    port = file.by_type("IfcDistributionPort")[0]
+    assert port.PredefinedType == "PIPE"
+    assert port.ObjectType == "Точка подключения к внешним сетям"
+
+
+def test_port_is_not_put_into_spatial_structure():
+    """IfcPort не элемент пространственной структуры — в контейнер площадки не идёт."""
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    site = file.by_type("IfcSite")[0]
+    rels = [r for r in file.by_type("IfcRelContainedInSpatialStructure") if r.RelatingStructure == site]
+    contained = {product.Name for rel in rels for product in rel.RelatedElements}
+
+    assert contained == {"ЗД-1", "Ф-1", "КН-1"}
+
+
+def test_model_with_new_node_types_saves_and_reopens(tmp_path):
+    file = generate_ifc_from_network(make_reference_node_types_model())
+    path = tmp_path / "node_types.ifc"
+
+    save(file, path)
+    reopened = ifcopenshell.open(str(path))
+
+    assert len(reopened.by_type("IfcValve")) == 1
+    assert len(reopened.by_type("IfcDistributionPort")) == 1

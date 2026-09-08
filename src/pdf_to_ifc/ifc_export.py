@@ -93,11 +93,45 @@ if TYPE_CHECKING:
 # PredefinedType; конкретный occurrence-класс для трассовых фитингов —
 # IfcPipeFitting (подтип IfcFlowFitting, так что file.by_type("IfcFlowFitting")
 # всё равно находит их через иерархию типов).
+# Задача 2 брифа: типы узлов расширены под то, что реально есть в эталонном
+# файле data/raw/ПРНС_ЛО_ТКР-ТС_У1_Э1_I2300.ifc. Там все 328 элементов —
+# IfcBuildingElementProxy (IFC2X3), а тип зашит в имя IfcPropertySet:
+# Труба (165), Неподвижная опора (70), Колодец (23), Трубопроводная арматура (18),
+# Канал (12), Точка подключения к внешним сетям (11), Футляр (10), Камера (3).
+# Прежняя таблица покрывала только камеры/уличные узлы/опоры/компенсаторы —
+# арматуры, каналов, футляров и точек подключения в ней не было вовсе.
+# Решение расширить модель принято человеком при постановке этой задачи
+# (эталон в proxy-классы мы при этом НЕ повторяем: генерируем осмысленные
+# IFC-классы, а сверка с эталоном идёт по геометрии, см. validate_geometry.py).
+#
+# Выбор классов:
+# - "valve" -> IfcValve: арматура в разрыве трассы, ровно как в дорожной карте (Ш1);
+# - "casing" -> IfcPipeFitting: футляр — не труба сети (через него труба проходит),
+#   отдельной сущности под футляр/кожух в IFC4.3 нет; помечаем ObjectType;
+# - "channel" -> IfcDistributionChamberElement: непроходной канал — это
+#   строительная конструкция вокруг трассы, ближайший осмысленный класс тот же,
+#   что у камер (в эталоне это тоже отдельный объект со своими габаритами);
+# - "connection_point" -> IfcDistributionPort — точка подключения к внешним
+#   сетям, это именно порт, а не элемент; см. оговорку в generate_ifc_from_network().
 NODE_TYPE_TO_IFC: Dict[str, tuple] = {
     "chamber": ("IfcDistributionChamberElement", "Камера"),
     "street_unit": ("IfcDistributionChamberElement", "Уличный узел"),
     "support": ("IfcPipeFitting", "Опора"),
     "compensator": ("IfcPipeFitting", "Компенсатор"),
+    "valve": ("IfcValve", "Трубопроводная арматура"),
+    "casing": ("IfcPipeFitting", "Футляр"),
+    "channel": ("IfcDistributionChamberElement", "Канал"),
+    "connection_point": ("IfcDistributionPort", "Точка подключения к внешним сетям"),
+}
+
+# PredefinedType узла по умолчанию — "USERDEFINED" (пояснение выше). Здесь
+# перечислены типы узлов, где у IFC-класса свой осмысленный перечислитель:
+# у IfcDistributionPort PredefinedType — это тип ПЕРЕНОСИМОЙ СРЕДЫ
+# (IfcDistributionPortTypeEnum: PIPE / DUCT / CABLE / ...), а не "тип объекта",
+# поэтому "USERDEFINED" был бы здесь потерей смысла: точка подключения
+# теплосети — это трубопроводный порт.
+NODE_TYPE_PREDEFINED_TYPE: Dict[str, str] = {
+    "connection_point": "PIPE",
 }
 
 
@@ -354,6 +388,12 @@ def generate_ifc_from_network(
     IfcPipeSegment по звеньям ломаной плюс IfcPipeFitting BEND в точках
     изгиба — см. _create_edge_products().
 
+    Оговорка по "connection_point": он отображается в IfcDistributionPort,
+    а порт по схеме не является IfcProduct-элементом пространственной
+    структуры — в IfcRelContainedInSpatialStructure он не попадает и
+    привязывается к площадке только косвенно. Полноценная привязка порта к
+    элементу (IfcRelConnectsPortToElement) появится тогда, когда в модели
+    будет, к чему его привязывать, — сейчас такой связи в доменной модели нет.
     """
     if file is None:
         file = create_minimal_project(project_name=model.project_name, site_name=site_name)
@@ -382,7 +422,7 @@ def generate_ifc_from_network(
             "root.create_entity", file, ifc_class=ifc_class, name=node.name
         )
         entity.ObjectType = object_type
-        entity.PredefinedType = "USERDEFINED"
+        entity.PredefinedType = NODE_TYPE_PREDEFINED_TYPE.get(node.node_type, "USERDEFINED")
         entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
 
         node_entities[node.name] = entity
@@ -391,12 +431,17 @@ def generate_ifc_from_network(
     for edge in model.edges:
         new_products.extend(_create_edge_products(file, body_context, model, edge))
 
-    ifcopenshell.api.run(
-        "spatial.assign_container",
-        file,
-        relating_structure=site,
-        products=new_products,
-    )
+    # IfcDistributionPort не является элементом пространственной структуры —
+    # spatial.assign_container на нём падает по схеме, поэтому порты сюда не
+    # попадают (см. оговорку в докстринге).
+    containable = [p for p in new_products if not p.is_a("IfcPort")]
+    if containable:
+        ifcopenshell.api.run(
+            "spatial.assign_container",
+            file,
+            relating_structure=site,
+            products=containable,
+        )
 
     return file
 
