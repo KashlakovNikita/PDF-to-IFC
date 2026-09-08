@@ -218,3 +218,154 @@ def test_chambers_and_fittings_have_no_geometry_representation():
     for fitting in file.by_type("IfcPipeFitting"):
         assert fitting.Representation is None
 
+
+# ---------------------------------------------------------------------------
+# Задача 1 брифа: waypoints — труба идёт по ломаной, а не мимо конечного узла
+#
+# Ключевой кейс, которого раньше не было в покрытии: length (спецификация)
+# заведомо больше прямого расстояния между узлами. Старый код на таком ребре
+# создавал ОДИН цилиндр длиной edge.length вдоль прямого направления и
+# промахивался мимо конечного узла ровно на величину изгиба — тесты ниже
+# на нём падают.
+# ---------------------------------------------------------------------------
+
+
+def pipe_axis_endpoints(pipe):
+    """Начало и конец оси трубы в глобальных координатах.
+
+    Считается из ObjectPlacement (Location + Axis) и Depth экструзии — то есть
+    ровно так, как эту трубу увидит вьюер, а не так, как её задумывал код.
+    """
+    placement = pipe.ObjectPlacement.RelativePlacement
+    start = tuple(placement.Location.Coordinates)
+    axis = tuple(placement.Axis.DirectionRatios)
+    depth = pipe.Representation.Representations[0].Items[0].Depth
+    end = tuple(s + a * depth for s, a in zip(start, axis))
+    return start, end
+
+
+def make_bent_model() -> ThermalNetworkModel:
+    """Г-образный участок с двумя точками изгиба между двумя узлами.
+
+    ТК-1 (0, 0, 28) -> (10, 20, 28) -> (20, 20, 28) -> ТК-2 (30, 0, 28).
+    Прямое расстояние между узлами 30 м, длина ломаной ~54.7 м, а в
+    спецификации стоит 60.0 м — все три величины разные намеренно.
+    """
+    model = ThermalNetworkModel(project_name="Изгибы")
+    model.add_node(NetworkNode(name="ТК-1", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_node(NetworkNode(name="ТК-2", x=30.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_edge(NetworkEdge(
+        start_node="ТК-1", end_node="ТК-2", branch="supply",
+        diameter=325, length=60.0, material="Steel", insulation="PPU+PE",
+        laying_type="underground", waypoints=[(10.0, 20.0, 28.0), (20.0, 20.0, 28.0)],
+    ))
+    return model
+
+
+def test_edge_with_waypoints_is_split_into_one_pipe_per_polyline_link():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = file.by_type("IfcPipeSegment")
+    names = {p.Name for p in pipes}
+
+    assert len(pipes) == 3
+    assert names == {
+        "ТК-1->ТК-2 (supply) [1/3]",
+        "ТК-1->ТК-2 (supply) [2/3]",
+        "ТК-1->ТК-2 (supply) [3/3]",
+    }
+
+
+def test_pipe_chain_starts_at_start_node_and_ends_exactly_at_end_node():
+    """Тот самый промах мимо конечного узла: старый код давал конец (60, 0, 28)."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    first_start, _ = pipe_axis_endpoints(pipes[0])
+    _, last_end = pipe_axis_endpoints(pipes[-1])
+
+    assert first_start == pytest.approx((0.0, 0.0, 28.0))
+    assert last_end == pytest.approx((30.0, 0.0, 28.0))
+
+
+def test_each_sub_segment_is_as_long_as_its_own_polyline_link():
+    """Depth под-сегмента — расстояние между его концами, а не edge.length целиком."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    depths = [p.Representation.Representations[0].Items[0].Depth for p in pipes]
+
+    diagonal = (10.0 ** 2 + 20.0 ** 2) ** 0.5
+    assert depths == pytest.approx([diagonal, 10.0, diagonal])
+    assert sum(depths) != pytest.approx(60.0)  # спецификация и геометрия расходятся
+
+
+def test_sub_segments_are_joined_end_to_end_without_gaps():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    for previous, following in zip(pipes, pipes[1:]):
+        _, previous_end = pipe_axis_endpoints(previous)
+        following_start, _ = pipe_axis_endpoints(following)
+        assert previous_end == pytest.approx(following_start)
+
+
+def test_bend_fitting_is_created_in_every_waypoint():
+    file = generate_ifc_from_network(make_bent_model())
+
+    bends = [f for f in file.by_type("IfcPipeFitting") if f.PredefinedType == "BEND"]
+    locations = {tuple(b.ObjectPlacement.RelativePlacement.Location.Coordinates) for b in bends}
+
+    assert len(bends) == 2
+    assert locations == {(10.0, 20.0, 28.0), (20.0, 20.0, 28.0)}
+    assert {b.Name for b in bends} == {"ТК-1->ТК-2 (supply) изгиб 1", "ТК-1->ТК-2 (supply) изгиб 2"}
+
+
+def test_bend_fittings_are_contained_in_the_site():
+    file = generate_ifc_from_network(make_bent_model())
+
+    site = file.by_type("IfcSite")[0]
+    rels = [r for r in file.by_type("IfcRelContainedInSpatialStructure") if r.RelatingStructure == site]
+    contained = {product.Name for rel in rels for product in rel.RelatedElements}
+
+    assert "ТК-1->ТК-2 (supply) изгиб 1" in contained
+    assert "ТК-1->ТК-2 (supply) [1/3]" in contained
+
+
+def test_edge_without_waypoints_keeps_previous_single_pipe_behaviour():
+    """Обратная совместимость: пустой waypoints = ровно то, что было до задачи 1."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    pipes = file.by_type("IfcPipeSegment")
+    bends = [f for f in file.by_type("IfcPipeFitting") if f.PredefinedType == "BEND"]
+
+    assert len(pipes) == 2
+    assert {p.Name for p in pipes} == {"УТ-1->Н1 (supply)", "УТ-1->Н1 (return)"}
+    assert bends == []
+
+
+def test_horizontal_pipe_along_x_axis_does_not_break_placement():
+    """Регресс: труба строго вдоль оси X роняла экспорт нулевым RefDirection.
+
+    _perpendicular_direction() выбирал опорный вектор (1, 0, 0) именно тогда,
+    когда ось трубы почти совпадает с X, — проекция вырождалась в ноль.
+    Датасет с шагом 50 м и перепадом 0.1 м промахивался мимо этого случая
+    на 2e-6, поэтому в тесты баг не попадал.
+    """
+    model = ThermalNetworkModel(project_name="Горизонталь")
+    model.add_node(NetworkNode(name="A", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=50.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_edge(NetworkEdge(
+        start_node="A", end_node="B", diameter=100, length=50.0, material="Steel",
+        insulation="none", laying_type="underground",
+    ))
+
+    file = generate_ifc_from_network(model)
+
+    placement = file.by_type("IfcPipeSegment")[0].ObjectPlacement.RelativePlacement
+    axis = placement.Axis.DirectionRatios
+    ref = placement.RefDirection.DirectionRatios
+
+    assert axis == pytest.approx((1.0, 0.0, 0.0))
+    assert sum(a * r for a, r in zip(axis, ref)) == pytest.approx(0.0, abs=1e-9)
+    assert sum(r * r for r in ref) == pytest.approx(1.0)

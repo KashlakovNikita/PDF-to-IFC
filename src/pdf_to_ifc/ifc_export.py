@@ -44,13 +44,41 @@ z_pipe_bottom) и включение в пространственную стр�
 ось Z локальной системы координат (Axis) направлена на end_node — тогда
 Depth extrusion'а вдоль локального Z корректно укладывает цилиндр между
 двумя узлами в глобальных координатах без ручного пересчёта вершин.
+
+Задача 1 брифа (эта): изгибы трассы — waypoints
+------------------------------------------------
+Найденная причина расхождения геометрии с эталоном: труба вытягивалась на
+edge.length (реальная длина трубы из спецификации) вдоль ПРЯМОГО направления
+start_node -> end_node. На изогнутом участке length всегда больше прямого
+расстояния между узлами, поэтому цилиндр проезжал мимо конечного узла ровно
+на величину изгиба трассы. На синтетическом датасете (data/samples/parnas_*,
+координаты-placeholder'ы строго по прямой) это не проявлялось.
+
+Теперь одно ребро (NetworkEdge) разворачивается в ломаную
+start_node -> waypoints -> end_node (NetworkEdge.polyline) и генерируется:
+
+- по одному IfcPipeSegment на каждое ЗВЕНО ломаной, Depth = фактическое
+  расстояние между двумя соседними точками звена (а не edge.length целиком
+  на каждое звено — иначе каждый под-сегмент промахивался бы отдельно);
+- по одному IfcPipeFitting с PredefinedType="BEND" в каждой промежуточной
+  точке (в самих waypoints; в узлах сети фитинги не ставим — там уже стоят
+  объекты узлов из задачи 7).
+
+Сознательное решение по Depth для ПРЯМЫХ участков (waypoints пуст): остаётся
+edge.length, как было до этой задачи. Причина — требование обратной
+совместимости из брифа («пустой список = поведение без изменений»): пока
+трасса не оцифрована, спецификационная длина — единственный источник длины
+трубы, и подменять её прямым расстоянием между узлами значило бы молча
+терять данные спецификации. Как следствие, для прямого участка возможно
+расхождение length с геометрией; оно измеримо через
+NetworkEdge.length_mismatch() и попадает в отчёт scripts/validate_geometry.py.
 """
 
 from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Tuple, Union
 
 import ifcopenshell
 import ifcopenshell.api
@@ -145,8 +173,23 @@ def _perpendicular_direction(unit_axis: Tuple[float, float, float]) -> Tuple[flo
     """Произвольный, но детерминированный вектор, перпендикулярный unit_axis —
     нужен как RefDirection для IfcAxis2Placement3D (для цилиндра ориентация
     вокруг своей оси не важна, важна только сама ось).
+
+    Опорный вектор — та ось глобальной системы координат, вдоль которой
+    unit_axis выражен слабее всего. Так проекция гарантированно не вырождается:
+    у единичного вектора минимальная по модулю компонента не превышает
+    1/sqrt(3), поэтому длина результата до нормировки >= sqrt(2/3) ~ 0.82.
+
+    Так было не всегда: до задачи 1 брифа опорный вектор выбирался обратным
+    условием — (1, 0, 0) при |unit_axis.x| > 0.999, то есть ровно тогда, когда
+    он почти совпадает с осью. Для трубы, идущей строго вдоль X, проекция
+    обращалась в ноль, и экспорт падал с "Нулевая длина направления трубы",
+    хотя направление было задано корректно. Тестовый датасет промахивался
+    мимо этого случая: шаг 50 м по X при перепаде отметок 0.1 м даёт
+    |unit_axis.x| = 0.9999980, то есть вырожденный, но всё же ненулевой
+    RefDirection. На реальной трассе с горизонтальными участками падало бы.
     """
-    reference = (1.0, 0.0, 0.0) if abs(unit_axis[0]) > 0.999 else (0.0, 0.0, 1.0)
+    smallest_axis = min(range(3), key=lambda i: abs(unit_axis[i]))
+    reference = tuple(1.0 if i == smallest_axis else 0.0 for i in range(3))
     dot = sum(a * b for a, b in zip(unit_axis, reference))
     raw = tuple(r - dot * a for r, a in zip(reference, unit_axis))
     return _unit_vector(raw)
@@ -226,6 +269,70 @@ def _find_body_context(file: ifcopenshell.file) -> "ifcopenshell.entity_instance
     return body_contexts[0]
 
 
+def _create_edge_products(
+    file: ifcopenshell.file,
+    body_context: "ifcopenshell.entity_instance",
+    model: "ThermalNetworkModel",
+    edge,
+) -> List["ifcopenshell.entity_instance"]:
+    """Развернуть одну нитку (NetworkEdge) в IFC-объекты: трубы + фитинги изгибов.
+
+    Ломаная берётся из edge.polyline(model.nodes) — это start_node, затем
+    waypoints по порядку, затем end_node. Для прямого участка (waypoints пуст)
+    в ломаной ровно две точки, значит создаётся один IfcPipeSegment с прежним
+    именем и прежним Depth=edge.length — поведение до задачи 1 брифа
+    сохраняется байт в байт.
+
+    Для изогнутого участка:
+    - на каждое звено ломаной свой IfcPipeSegment, Depth = длина ЭТОГО звена;
+      имя получает суффикс " [i/n]", чтобы под-сегменты одной нитки было видно
+      в вьюере как одну нитку, а не как n безымянных труб;
+    - в каждой промежуточной точке — IfcPipeFitting с PredefinedType="BEND".
+      Фитинги ставятся только в waypoints: в узлах сети (start_node/end_node)
+      уже стоят объекты узлов из задачи 7, дублировать их фитингом нельзя.
+    """
+    points = edge.polyline(model.nodes)
+    segment_count = len(points) - 1
+    suffix = "" if edge.branch == "single" else f" ({edge.branch})"
+    base_name = f"{edge.start_node}->{edge.end_node}{suffix}"
+    radius_m = edge.diameter / 1000.0 / 2.0
+
+    products: List["ifcopenshell.entity_instance"] = []
+
+    for index, (segment_start, segment_end) in enumerate(zip(points, points[1:]), start=1):
+        direction = tuple(b - a for a, b in zip(segment_start, segment_end))
+        # Для прямого участка длина берётся из спецификации (обратная
+        # совместимость, см. докстринг модуля), для звена ломаной — фактическое
+        # расстояние между его концами.
+        depth_m = edge.length if segment_count == 1 else math.dist(segment_start, segment_end)
+        name = base_name if segment_count == 1 else f"{base_name} [{index}/{segment_count}]"
+
+        pipe = ifcopenshell.api.run(
+            "root.create_entity", file, ifc_class="IfcPipeSegment", name=name
+        )
+        pipe.PredefinedType = "USERDEFINED"
+        pipe.ObjectType = "Труба"
+        pipe.ObjectPlacement = _oriented_placement(file, segment_start, direction)
+        pipe.Representation = _pipe_body_representation(
+            file, body_context, radius_m=radius_m, depth_m=depth_m
+        )
+        products.append(pipe)
+
+    for index, waypoint in enumerate(edge.waypoints, start=1):
+        bend = ifcopenshell.api.run(
+            "root.create_entity",
+            file,
+            ifc_class="IfcPipeFitting",
+            name=f"{base_name} изгиб {index}",
+        )
+        bend.PredefinedType = "BEND"
+        bend.ObjectType = "Поворот трассы"
+        bend.ObjectPlacement = _local_placement(file, *waypoint)
+        products.append(bend)
+
+    return products
+
+
 def generate_ifc_from_network(
     model: "ThermalNetworkModel",
     *,
@@ -240,8 +347,13 @@ def generate_ifc_from_network(
     в который добавляются новые элементы.
 
     Трубы получают геометрию (задача 8) — цилиндр по DN, ориентированный
-    от start_node к end_node. Камеры и фитинги — только ObjectPlacement,
-    без формы (геометрия камер не входит ни в задачу 7, ни в задачу 8).
+    вдоль звена трассы. Камеры и фитинги — только ObjectPlacement, без формы
+    (геометрия камер не входит ни в задачу 7, ни в задачу 8).
+
+    Нитка с waypoints (задача 1 брифа) разворачивается в несколько
+    IfcPipeSegment по звеньям ломаной плюс IfcPipeFitting BEND в точках
+    изгиба — см. _create_edge_products().
+
     """
     if file is None:
         file = create_minimal_project(project_name=model.project_name, site_name=site_name)
@@ -277,30 +389,7 @@ def generate_ifc_from_network(
         new_products.append(entity)
 
     for edge in model.edges:
-        start = model.nodes[edge.start_node]
-        end = model.nodes[edge.end_node]
-        origin = (start.x, start.y, start.z_pipe_bottom)
-        direction = (
-            end.x - start.x,
-            end.y - start.y,
-            end.z_pipe_bottom - start.z_pipe_bottom,
-        )
-
-        suffix = "" if edge.branch == "single" else f" ({edge.branch})"
-        pipe = ifcopenshell.api.run(
-            "root.create_entity",
-            file,
-            ifc_class="IfcPipeSegment",
-            name=f"{edge.start_node}->{edge.end_node}{suffix}",
-        )
-        pipe.PredefinedType = "USERDEFINED"
-        pipe.ObjectType = "Труба"
-        pipe.ObjectPlacement = _oriented_placement(file, origin, direction)
-        pipe.Representation = _pipe_body_representation(
-            file, body_context, radius_m=edge.diameter / 1000.0 / 2.0, depth_m=edge.length
-        )
-
-        new_products.append(pipe)
+        new_products.extend(_create_edge_products(file, body_context, model, edge))
 
     ifcopenshell.api.run(
         "spatial.assign_container",
