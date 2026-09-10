@@ -358,7 +358,13 @@ def load_generated_centerlines(path: Path) -> Tuple[List[Centerline], Dict[str, 
             stats["geometry_failed"] += 1
             continue
         properties = ifcopenshell.util.element.get_psets(element).get(PIPE_PSET_NAME, {})
-        dn = properties.get("DN")
+        # Свойства нашего Pset названы по-русски, как в эталоне (задача 9
+        # переигрывается): «Условный проход» — мм, «Диаметр» — м. Читаем первое,
+        # второе оставлено запасным на случай файлов, собранных до переименования
+        # или сторонним инструментом.
+        dn = properties.get("Условный проход")
+        if dn is None and properties.get("Диаметр") is not None:
+            dn = round(float(properties["Диаметр"]) * 1000.0)
         line = _centerline_from_vertices(
             vertices,
             name=element.Name or f"#{element.id()}",

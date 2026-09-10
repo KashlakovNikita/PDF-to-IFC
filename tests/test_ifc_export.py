@@ -455,18 +455,20 @@ def test_every_pipe_gets_the_property_set():
 
 
 def test_pipe_pset_carries_dn_material_insulation_and_laying_type():
+    """Имена свойств — кириллицей, как в эталоне (задача 9 переигрывается)."""
     file = generate_ifc_from_network(make_four_node_model())
     pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
 
     properties = pipe_pset(pipe)
 
-    assert properties["DN"] == 426  # мм, как в спецификации, а не метры геометрии
-    assert properties["Material"] == "Steel"
-    assert properties["Insulation"] == "PUR-OC"
-    assert properties["LayingType"] == "overhead"
-    assert properties["Branch"] == "supply"
-    assert properties["SourceEdge"] == "УТ-1->Н1"
-    assert properties["Slope"] == pytest.approx((27.0 - 26.9) / 50.0)
+    assert properties["Условный проход"] == 426  # мм, как в спецификации
+    assert properties["Диаметр"] == pytest.approx(0.426)  # м, как в эталоне
+    assert properties["Материал"] == "Steel"
+    assert properties["Изоляция"] == "PUR-OC"
+    assert properties["Тип прокладки"] == "overhead"
+    assert properties["Нитка"] == "supply"
+    assert properties["Участок"] == "УТ-1->Н1"
+    assert properties["Уклон"] == pytest.approx((27.0 - 26.9) / 50.0)
 
 
 def test_pipe_pset_does_not_invent_pressure_or_temperature():
@@ -474,8 +476,8 @@ def test_pipe_pset_does_not_invent_pressure_or_temperature():
     file = generate_ifc_from_network(make_four_node_model())
     properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
 
-    assert "Pressure" not in properties
-    assert "Temperature" not in properties
+    assert "Давление" not in properties
+    assert "Температура" not in properties
 
 
 def test_sub_segments_carry_their_own_length_and_index_but_shared_spec_length():
@@ -485,10 +487,10 @@ def test_sub_segments_carry_their_own_length_and_index_but_shared_spec_length():
     properties = [pipe_pset(p) for p in pipes]
     diagonal = (10.0 ** 2 + 20.0 ** 2) ** 0.5
 
-    assert [p["SegmentIndex"] for p in properties] == [1, 2, 3]
-    assert {p["SegmentCount"] for p in properties} == {3}
-    assert [p["SegmentLength"] for p in properties] == pytest.approx([diagonal, 10.0, diagonal])
-    assert {p["SpecLength"] for p in properties} == {60.0}  # спецификация одна на нитку
+    assert [p["Номер сегмента"] for p in properties] == [1, 2, 3]
+    assert {p["Всего сегментов"] for p in properties} == {3}
+    assert [p["Длина сегмента"] for p in properties] == pytest.approx([diagonal, 10.0, diagonal])
+    assert {p["Длина по спецификации"] for p in properties} == {60.0}  # одна на нитку
 
 
 def test_pipe_pset_survives_save_and_reopen(tmp_path):
@@ -499,7 +501,7 @@ def test_pipe_pset_survives_save_and_reopen(tmp_path):
     reopened = ifcopenshell.open(str(path))
     pipe = next(p for p in reopened.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (return)")
 
-    assert pipe_pset(pipe)["DN"] == 426
+    assert pipe_pset(pipe)["Условный проход"] == 426
 
 
 def test_nodes_do_not_get_the_pipe_property_set():
@@ -537,3 +539,22 @@ def test_shared_node_keeps_its_bare_name_in_ifc():
     file = generate_ifc_from_network(make_four_node_model())
 
     assert {c.Name for c in file.by_type("IfcDistributionChamberElement")} == {"УТ-1", "ТК-2"}
+
+
+def test_pipe_pset_property_names_are_cyrillic_like_in_the_reference():
+    """Приёмка идёт по эталону: свойство «Диаметр» должно называться «Диаметр»."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert "Диаметр" in properties
+    assert "Материал" in properties
+    assert not any(name.isascii() for name in properties)
+
+
+def test_pipe_pset_diameter_is_in_metres_and_dn_in_millimetres():
+    """У эталонного имени должна быть эталонная единица, иначе имя врёт."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Диаметр"] == pytest.approx(0.426)
+    assert properties["Условный проход"] == 426
