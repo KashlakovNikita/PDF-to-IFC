@@ -8,6 +8,11 @@ __pycache__/
 data/raw/*
 !data/raw/.gitkeep
 
+# Исходные DWG заказчика (28 МБ бинарников) и DXF, полученные из них
+# конвертацией. Кладутся на диск, в гит не идут — как и data/raw.
+data/reference/dwg/*
+!data/reference/dwg/.gitkeep
+
 # Результаты генерации (пересобираются скриптами из scripts/)
 out/
 
