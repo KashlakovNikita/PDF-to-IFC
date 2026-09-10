@@ -18,6 +18,7 @@ from pdf_to_ifc.ifc_export import (
     save,
 )
 from pdf_to_ifc.model import NetworkEdge, NetworkNode, ThermalNetworkModel
+from pdf_to_ifc.node_sizes import size_for
 
 
 def test_create_minimal_project_has_project_and_site():
@@ -593,3 +594,94 @@ def test_pipe_pset_omits_naimenovanie_when_designation_is_unknown():
     file = generate_ifc_from_network(make_four_node_model())
 
     assert "Наименование" not in pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+
+# ---------------------------------------------------------------------------
+# Задача 28: габариты узлов из эталонной модели
+# ---------------------------------------------------------------------------
+
+
+def make_sized_nodes_model() -> ThermalNetworkModel:
+    """Трасса вдоль оси Y с арматурой, футляром, каналом и точкой подключения."""
+    model = ThermalNetworkModel(project_name="Габариты узлов")
+    plan = [
+        ("ТК-1", "chamber", 0.0),
+        ("ЗД-1", "valve", 40.0),
+        ("Ф-1", "casing", 80.0),
+        ("КН-1", "channel", 120.0),
+        ("ТВ-1", "connection_point", 160.0),
+    ]
+    for name, node_type, y in plan:
+        model.add_node(NetworkNode(name=name, x=0.0, y=y, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type=node_type))
+    for (start, _, _), (end, _, _) in zip(plan, plan[1:]):
+        model.add_edge(NetworkEdge(start_node=start, end_node=end, diameter=325,
+                                   length=40.0, material="Steel", insulation="PPU+PE",
+                                   laying_type="underground_ducted"))
+    return model
+
+
+def node_solid(file, name):
+    entity = next(e for e in file.by_type("IfcProduct") if e.Name == name)
+    return entity, entity.Representation.Representations[0].Items[0]
+
+
+def test_valve_gets_a_box_with_the_reference_dimensions():
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    _, solid = node_solid(file, "ЗД-1")
+    size = size_for("valve")
+
+    assert solid.is_a("IfcExtrudedAreaSolid")
+    assert solid.SweptArea.is_a("IfcRectangleProfileDef")
+    assert solid.Depth == pytest.approx(size.length_m)
+    assert solid.SweptArea.XDim == pytest.approx(size.width_m)
+    assert solid.SweptArea.YDim == pytest.approx(size.height_m)
+
+
+def test_casing_channel_and_connection_point_also_get_bodies():
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    for name, node_type in (("Ф-1", "casing"), ("КН-1", "channel"), ("ТВ-1", "connection_point")):
+        _, solid = node_solid(file, name)
+        assert solid.Depth == pytest.approx(size_for(node_type).length_m)
+
+
+def test_sized_node_body_is_oriented_along_the_route():
+    """Футляр поперёк трубы — хуже, чем футляр без геометрии."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    entity, _ = node_solid(file, "Ф-1")
+    axis = entity.ObjectPlacement.RelativePlacement.Axis.DirectionRatios
+
+    assert axis == pytest.approx((0.0, 1.0, 0.0))  # трасса идёт вдоль Y
+
+
+def test_sized_node_box_sits_on_the_node_elevation():
+    """Узел размещается по отметке лотка, значит короб стоит на ней низом."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    _, solid = node_solid(file, "ЗД-1")
+
+    assert solid.SweptArea.Position.Location.Coordinates[1] == pytest.approx(
+        size_for("valve").height_m / 2
+    )
+
+
+def test_node_without_any_pipe_gets_no_body():
+    """Направление брать неоткуда — форму не выдумываем."""
+    model = ThermalNetworkModel(project_name="Одинокая арматура")
+    model.add_node(NetworkNode(name="ЗД-1", x=0.0, y=0.0, z_surface=30.0,
+                               z_pipe_bottom=28.0, node_type="valve"))
+
+    file = generate_ifc_from_network(model)
+
+    assert file.by_type("IfcValve")[0].Representation is None
+
+
+def test_chambers_and_supports_still_have_no_geometry():
+    """Их габариты в эталоне есть, но зависят от типового узла прокладки."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    assert size_for("chamber") is None
+    assert next(e for e in file.by_type("IfcProduct") if e.Name == "ТК-1").Representation is None

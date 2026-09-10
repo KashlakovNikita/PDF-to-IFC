@@ -95,6 +95,17 @@ IDS-проверку, но приёмка идёт по эталону, и св�
 Давление и температура (задача 29) пишутся, если заданы в модели, и не
 пишутся, если нет: «неизвестно» выражается отсутствием свойства. Ввести их
 можно руками через pdf_to_ifc.manual_input, пока нет экстрактора спецификации.
+Задача 28 (эта): габариты узлов. Арматура, футляры, каналы и точки подключения
+получают тело — габаритный короб по типовым размерам из pdf_to_ifc.node_sizes
+(измерены по эталонной модели проекта). Короб разворачивается ВДОЛЬ трассы, по
+направлению первой нитки, которая приходит в узел: положить футляр или канал
+поперёк трубы было бы хуже, чем не рисовать их вовсе. Узел, в который не
+приходит ни одна нитка, формы не получает — направление брать неоткуда.
+
+Камеры, уличные узлы, опоры и компенсаторы по-прежнему без формы: в эталоне их
+габариты есть, но они завязаны на конкретный типовой узел прокладки, и медиана
+по трём камерам — это не проектное решение (см. докстринг node_sizes).
+
 Обозначение трубы по ГОСТ (задача 30) пишется в свойство «Наименование» —
 так оно называется в эталоне ("Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ
 30732-2020"). В модели под него отдельное поле gost_designation, живущее
@@ -109,6 +120,8 @@ from typing import TYPE_CHECKING, Dict, List, Tuple, Union
 
 import ifcopenshell
 import ifcopenshell.api
+
+from pdf_to_ifc.node_sizes import NodeSize, size_for
 
 if TYPE_CHECKING:
     from pdf_to_ifc.model import ThermalNetworkModel
@@ -325,6 +338,72 @@ def _pipe_body_representation(
     return file.create_entity("IfcProductDefinitionShape", Representations=[shape_representation])
 
 
+def _node_body_representation(
+    file: ifcopenshell.file,
+    body_context: "ifcopenshell.entity_instance",
+    size: NodeSize,
+) -> "ifcopenshell.entity_instance":
+    """Габаритный короб узла: прямоугольный профиль, вытянутый вдоль локальной Z.
+
+    Локальная Z у такого узла направлена вдоль трассы (см. generate_ifc_from_network),
+    поэтому профиль — это сечение поперёк трубы: ширина на высоту, а вытягивание
+    идёт на длину объекта. Профиль центрирован по ширине и поднят так, чтобы низ
+    короба лежал на отметке узла: узел размещается по z_pipe_bottom, то есть по
+    низу, а не по центру.
+    """
+    profile_origin = file.create_entity(
+        "IfcCartesianPoint", Coordinates=(0.0, float(size.height_m) / 2.0)
+    )
+    profile_position = file.create_entity("IfcAxis2Placement2D", Location=profile_origin)
+    profile = file.create_entity(
+        "IfcRectangleProfileDef",
+        ProfileType="AREA",
+        Position=profile_position,
+        XDim=float(size.width_m),
+        YDim=float(size.height_m),
+    )
+
+    extrusion_origin = file.create_entity(
+        "IfcCartesianPoint", Coordinates=(0.0, 0.0, -float(size.length_m) / 2.0)
+    )
+    extrusion_position = file.create_entity("IfcAxis2Placement3D", Location=extrusion_origin)
+    solid = file.create_entity(
+        "IfcExtrudedAreaSolid",
+        SweptArea=profile,
+        Position=extrusion_position,
+        ExtrudedDirection=file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+        Depth=float(size.length_m),
+    )
+    shape = file.create_entity(
+        "IfcShapeRepresentation",
+        ContextOfItems=body_context,
+        RepresentationIdentifier="Body",
+        RepresentationType="SweptSolid",
+        Items=[solid],
+    )
+    return file.create_entity("IfcProductDefinitionShape", Representations=[shape])
+
+
+def _node_directions(model: "ThermalNetworkModel") -> Dict[str, Tuple[float, float, float]]:
+    """Направление трассы в каждом узле — по первой нитке, которая в него приходит.
+
+    Берётся ближайшее к узлу звено ломаной: у ребра с точками изгиба направление
+    на дальний узел ничего не сказало бы о том, как труба выходит из ближнего.
+    """
+    directions: Dict[str, Tuple[float, float, float]] = {}
+    for edge in model.edges:
+        try:
+            start, end = edge.resolve_nodes(model.nodes)
+            points = edge.polyline(model.nodes)
+        except KeyError:
+            continue
+        first, second = points[0], points[1]
+        last, previous = points[-1], points[-2]
+        directions.setdefault(start.key, tuple(b - a for a, b in zip(first, second)))
+        directions.setdefault(end.key, tuple(b - a for a, b in zip(previous, last)))
+    return directions
+
+
 def _find_body_context(file: ifcopenshell.file) -> "ifcopenshell.entity_instance":
     body_contexts = [
         c for c in file.by_type("IfcGeometricRepresentationSubContext")
@@ -519,6 +598,7 @@ def generate_ifc_from_network(
     site = sites[0]
     body_context = _find_body_context(file)
 
+    node_directions = _node_directions(model)
     node_entities: Dict[str, "ifcopenshell.entity_instance"] = {}  # ключ — node.key
     new_products = []
 
@@ -539,7 +619,18 @@ def generate_ifc_from_network(
         )
         entity.ObjectType = object_type
         entity.PredefinedType = NODE_TYPE_PREDEFINED_TYPE.get(node.node_type, "USERDEFINED")
-        entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
+
+        # Задача 28: узлы с известными типовыми габаритами получают тело,
+        # развёрнутое вдоль трассы. Остальные — только точку размещения, как было.
+        size = size_for(node.node_type)
+        direction = node_directions.get(node.key)
+        if size is not None and direction is not None:
+            entity.ObjectPlacement = _oriented_placement(
+                file, (node.x, node.y, node.z_pipe_bottom), direction
+            )
+            entity.Representation = _node_body_representation(file, body_context, size)
+        else:
+            entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
 
         node_entities[node.key] = entity
         new_products.append(entity)
