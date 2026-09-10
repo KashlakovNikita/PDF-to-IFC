@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from pdf_to_ifc.ifc_export import generate_ifc_from_network, save  # noqa: E402
+from pdf_to_ifc.manual_input import load_manual_file  # noqa: E402
 from pdf_to_ifc.model import ThermalNetworkModel  # noqa: E402
 
 DEFAULT_MODEL = REPO_ROOT / "data" / "samples" / "parnas_model.json"
@@ -62,14 +63,19 @@ def add_demo_bend(model: ThermalNetworkModel) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL,
-                        help=f"JSON доменной модели (по умолчанию {DEFAULT_MODEL.name})")
+                        help=f"модель: JSON или txt ручного ввода (по умолчанию {DEFAULT_MODEL.name})")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
                         help=f"куда писать IFC (по умолчанию {DEFAULT_OUTPUT})")
     parser.add_argument("--demo-bend", action="store_true",
                         help="добавить искусственную точку изгиба на первый участок")
     args = parser.parse_args()
 
-    model = ThermalNetworkModel.load_json(args.model)
+    # Задача 29: модель можно подать и текстом ручного ввода, а не только JSON —
+    # это запасной путь для случаев, когда экстрактор не справился.
+    if args.model.suffix.lower() in (".txt", ".net"):
+        model = load_manual_file(args.model)
+    else:
+        model = ThermalNetworkModel.load_json(args.model)
     if args.demo_bend:
         add_demo_bend(model)
 

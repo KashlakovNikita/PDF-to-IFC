@@ -480,6 +480,20 @@ def test_pipe_pset_does_not_invent_pressure_or_temperature():
     assert "Температура" not in properties
 
 
+def test_pipe_pset_writes_pressure_and_temperature_when_they_are_known():
+    """Задача 29: заданные параметры теплоносителя попадают в свойства трубы."""
+    model = make_four_node_model()
+    for edge in model.edges:
+        edge.pressure_mpa = 1.6
+        edge.temperature_c = 130.0
+
+    file = generate_ifc_from_network(model)
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Давление"] == pytest.approx(1.6)
+    assert properties["Температура"] == pytest.approx(130.0)
+
+
 def test_sub_segments_carry_their_own_length_and_index_but_shared_spec_length():
     file = generate_ifc_from_network(make_bent_model())
 

@@ -20,6 +20,8 @@ generate_ifc_from_network() (задача 7, Трек B) будет приним
   до "valve" / "casing" / "channel" / "connection_point" — это типы, которые
   реально есть в эталонном IFC проекта (см. ifc_export.NODE_TYPE_TO_IFC);
 - `waypoints` у NetworkEdge — промежуточные точки изгиба трассы (см. ниже);
+- `pressure_mpa` / `temperature_c` у NetworkEdge — рабочие параметры
+  теплоносителя (задача 29), необязательные: None = неизвестно;
 - `validate()` (задача 3) сюда сознательно не включён — см. BACKLOG.md.
 
 Точки изгиба трассы (waypoints)
@@ -178,6 +180,12 @@ class NetworkEdge:
     branch: Branch = "single"
     slope: Optional[float] = None
     waypoints: List[Tuple[float, float, float]] = field(default_factory=list)
+    # Задача 29: рабочие параметры теплоносителя. None означает «неизвестно» —
+    # именно неизвестно, а не «ноль» и не «по умолчанию»: в спецификации они
+    # есть в общих данных листа, но экстрактора под них пока нет, а придуманное
+    # давление в IFC ничем не отличается на вид от измеренного.
+    pressure_mpa: Optional[float] = None   # рабочее давление, МПа
+    temperature_c: Optional[float] = None  # расчётная температура теплоносителя, °C
 
     def __post_init__(self) -> None:
         """Нормализовать waypoints к списку кортежей из трёх float.
