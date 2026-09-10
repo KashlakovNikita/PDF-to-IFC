@@ -508,3 +508,32 @@ def test_nodes_do_not_get_the_pipe_property_set():
 
     for chamber in file.by_type("IfcDistributionChamberElement"):
         assert PIPE_PSET_NAME not in ifcopenshell.util.element.get_psets(chamber)
+
+
+# ---------------------------------------------------------------------------
+# Задача 26: узлы-двойники раздельных ниток в IFC
+# ---------------------------------------------------------------------------
+
+
+def test_branch_twin_nodes_get_the_branch_in_their_ifc_name():
+    """Две «ТК-2» без признака нитки неразличимы в вьюере."""
+    model = ThermalNetworkModel(project_name="Раздельные нитки")
+    for branch in ("supply", "return"):
+        model.add_node(NetworkNode(name="ТК-1", x=0.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber", branch=branch))
+        model.add_node(NetworkNode(name="ТК-2", x=50.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=27.0, node_type="chamber", branch=branch))
+        model.add_edge(NetworkEdge(start_node="ТК-1", end_node="ТК-2", branch=branch,
+                                   diameter=325, length=50.0, material="Steel",
+                                   insulation="PPU+PE", laying_type="underground"))
+
+    file = generate_ifc_from_network(model)
+    names = {c.Name for c in file.by_type("IfcDistributionChamberElement")}
+
+    assert names == {"ТК-1 (supply)", "ТК-1 (return)", "ТК-2 (supply)", "ТК-2 (return)"}
+
+
+def test_shared_node_keeps_its_bare_name_in_ifc():
+    file = generate_ifc_from_network(make_four_node_model())
+
+    assert {c.Name for c in file.by_type("IfcDistributionChamberElement")} == {"УТ-1", "ТК-2"}

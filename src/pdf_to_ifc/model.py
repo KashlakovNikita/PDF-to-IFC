@@ -48,14 +48,42 @@ NetworkEdge представляет ОДНУ нитку трубы, а не ф�
 узлами — одно ребро с branch="single" (значение по умолчанию). Для тепловых
 сетей физическая трасса на плане — это две нитки (подача и обратка), значит
 между теми же двумя узлами будет ДВА ребра: branch="supply" и branch="return".
-Узел (камера/колодец) при этом один и тот же для обеих ниток — не дублируем.
+Раздельные графы ниток (задача 26, решение ПРЕДВАРИТЕЛЬНОЕ)
+------------------------------------------------------------
+Изначально узел был один на обе нитки: камера общая, через неё проходят и
+подача, и обратка. На реальных координатах выяснилось, почему так нельзя
+оставлять: в эталонной модели проекта нитки Т1 и Т2 физически разведены на
+0.70 м (диапазон 0.40..0.81), а одна общая осевая кладёт их в одно место.
+Половина этого разноса — 0.35 м — уже больше допуска приёмки 0.2 м, то есть при
+общем узле сверка не сойдётся никогда, как бы точно ни была оцифрована трасса.
+
+Решение заказчика: подача и обратка — ПОЛНОСТЬЮ РАЗДЕЛЬНЫЕ графы, а не общий
+узел с двумя ветками. Сделано так, чтобы не ломать существующие данные:
+
+- у NetworkNode появился branch (по умолчанию "single" — узел общий, как было);
+- узел с branch="supply"/"return" лежит в модели под ключом "имя@нитка", то
+  есть узлы-двойники с одинаковым именем не конфликтуют;
+- ребро ищет узел сначала среди узлов СВОЕЙ нитки и только потом среди общих,
+  поэтому смешанные модели (общие камеры + разведённые участки) работают без
+  переписывания;
+- split_by_branch() разрезает модель на отдельные модели по ниткам,
+  separate_branches() превращает общие узлы в узлы-двойники по нитке.
+
+Чего решение НЕ делает: оно не разводит нитки в стороны. Величина разноса —
+это данные (типовой узел прокладки, ширина канала), а не константа в коде, и
+брать её из воздуха нельзя. separate_branches() строит раздельные графы в тех
+же координатах, а сдвиг остаётся отдельным шагом.
+
+Решение помечено как предварительное — оно может измениться после проверки на
+реальных DWG-координатах. Раз так, обратная совместимость здесь не вежливость,
+а способ откатиться, не переписывая датасеты.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -66,6 +94,16 @@ NodeType = str  # 'chamber' (ТК), 'street_unit' (УТ), 'support', 'compensato
                 # 'valve', 'casing', 'channel', 'connection_point'
 LayingType = str  # 'underground', 'underground_ducted', 'in_casing', 'overhead'
 Branch = str  # 'single' (ВК и т.п.), 'supply' / 'return' (ТС), при необходимости другие
+
+
+def _find_node(nodes: Dict[str, "NetworkNode"], name: str, branch: str) -> "NetworkNode":
+    """Узел по имени: сначала свой по нитке («имя@нитка»), потом общий («имя»)."""
+    own = f"{name}@{branch}"
+    if own in nodes:
+        return nodes[own]
+    if name in nodes:
+        return nodes[name]
+    raise KeyError(f"Узел {name!r} не найден ни для нитки {branch!r}, ни как общий")
 
 
 def _as_point(point: Sequence[float]) -> Tuple[float, float, float]:
@@ -98,6 +136,16 @@ class NetworkNode:
     z_surface: float
     z_pipe_bottom: float
     node_type: NodeType
+    branch: Branch = "single"
+
+    @property
+    def key(self) -> str:
+        """Ключ узла в модели (задача 26): «имя» для общего, «имя@нитка» для своего.
+
+        Общий узел сохраняет прежний ключ, поэтому старые модели и датасеты
+        читаются и ведут себя как раньше.
+        """
+        return self.name if self.branch == "single" else f"{self.name}@{self.branch}"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -141,6 +189,16 @@ class NetworkEdge:
         """
         self.waypoints = [_as_point(point) for point in self.waypoints]
 
+    def resolve_nodes(self, nodes: Dict[str, NetworkNode]) -> Tuple[NetworkNode, NetworkNode]:
+        """Узлы ребра: сначала свои по нитке, потом общие (задача 26).
+
+        Такой порядок позволяет держать в одной модели и разведённые нитки, и
+        общие камеры: если для подачи заведён свой «ТК-2», ребро подачи возьмёт
+        его, а если нет — общий.
+        """
+        return (_find_node(nodes, self.start_node, self.branch),
+                _find_node(nodes, self.end_node, self.branch))
+
     def calculate_slope(self, nodes: Dict[str, NetworkNode]) -> float:
         """Уклон нитки по отметкам лотка начального и конечного узлов.
 
@@ -148,8 +206,7 @@ class NetworkEdge:
         waypoints: уклон — характеристика трубы, а не её оцифровки, и менять
         его от того, насколько точно оцифрован план, неправильно.
         """
-        start = nodes[self.start_node]
-        end = nodes[self.end_node]
+        start, end = self.resolve_nodes(nodes)
         self.slope = (start.z_pipe_bottom - end.z_pipe_bottom) / self.length
         return self.slope
 
@@ -161,8 +218,7 @@ class NetworkEdge:
         участка (waypoints пуст) возвращаются ровно две точки, то есть
         поведение прежнее.
         """
-        start = nodes[self.start_node]
-        end = nodes[self.end_node]
+        start, end = self.resolve_nodes(nodes)
         return [
             (start.x, start.y, start.z_pipe_bottom),
             *self.waypoints,
@@ -207,9 +263,14 @@ class ThermalNetworkModel:
     edges: List[NetworkEdge] = field(default_factory=list)
 
     def add_node(self, node: NetworkNode) -> None:
-        if node.name in self.nodes:
-            raise ValueError(f"Узел {node.name!r} уже добавлен")
-        self.nodes[node.name] = node
+        """Добавить узел. Ключ — node.key: «имя» для общего, «имя@нитка» для своего.
+
+        Узлы-двойники подачи и обратки с одинаковым именем не конфликтуют —
+        это и есть раздельные графы из задачи 26.
+        """
+        if node.key in self.nodes:
+            raise ValueError(f"Узел {node.key!r} уже добавлен")
+        self.nodes[node.key] = node
 
     def add_edge(self, edge: NetworkEdge) -> None:
         """Добавить нитку. Оба узла должны существовать; уклон считается автоматически.
@@ -217,7 +278,10 @@ class ThermalNetworkModel:
         (start_node, end_node, branch) должна быть уникальна — это то, что
         отличает "две нитки одного участка" от случайного дубликата.
         """
-        missing = [n for n in (edge.start_node, edge.end_node) if n not in self.nodes]
+        missing = [
+            name for name in (edge.start_node, edge.end_node)
+            if f"{name}@{edge.branch}" not in self.nodes and name not in self.nodes
+        ]
         if missing:
             raise ValueError(f"Узлы не найдены в модели: {missing}")
 
@@ -236,11 +300,75 @@ class ThermalNetworkModel:
         edge.calculate_slope(self.nodes)
         self.edges.append(edge)
 
+    def branches(self) -> List[Branch]:
+        """Нитки, которые реально есть в модели, в порядке появления."""
+        seen: List[Branch] = []
+        for edge in self.edges:
+            if edge.branch not in seen:
+                seen.append(edge.branch)
+        return seen
+
+    def split_by_branch(self) -> Dict[Branch, "ThermalNetworkModel"]:
+        """Разрезать модель на отдельные модели по ниткам (задача 26).
+
+        В каждую попадают только её рёбра и только те узлы, которые эти рёбра
+        используют, — включая общие камеры, если нитка ходит через них. Узлы
+        копируются, а не переиспользуются: после разреза модели независимы, и
+        правка координат подачи не двигает обратку. Это и есть «полностью
+        раздельные графы» из решения заказчика.
+        """
+        result: Dict[Branch, "ThermalNetworkModel"] = {}
+        for branch in self.branches():
+            part = ThermalNetworkModel(
+                project_name=f"{self.project_name} [{branch}]", source=self.source
+            )
+            for edge in self.edges:
+                if edge.branch != branch:
+                    continue
+                for node in edge.resolve_nodes(self.nodes):
+                    if node.key not in part.nodes:
+                        part.nodes[node.key] = replace(node)
+                part.edges.append(replace(edge, waypoints=list(edge.waypoints)))
+            result[branch] = part
+        return result
+
+    def separate_branches(self) -> "ThermalNetworkModel":
+        """Развести общие узлы в узлы-двойники по ниткам (задача 26).
+
+        Возвращается НОВАЯ модель, в которой у каждой нитки свои узлы, даже если
+        в исходной камера была общей. Координаты при этом не меняются: насколько
+        разводить нитки в пространстве — вопрос данных (типовой узел прокладки),
+        а не кода, и подставлять сюда число «чтобы сошлось» нельзя.
+
+        Узлы, которые не используются ни одним ребром, остаются общими: гадать,
+        к какой нитке их отнести, не на чем.
+        """
+        separated = ThermalNetworkModel(project_name=self.project_name, source=self.source)
+        used: Dict[str, List[Branch]] = {}
+        for edge in self.edges:
+            for name in (edge.start_node, edge.end_node):
+                used.setdefault(name, [])
+                if edge.branch not in used[name]:
+                    used[name].append(edge.branch)
+
+        for node in self.nodes.values():
+            branches = used.get(node.name, []) if node.branch == "single" else []
+            if node.branch != "single" or not branches or branches == ["single"]:
+                separated.nodes[node.key] = replace(node)
+                continue
+            for branch in branches:
+                twin = replace(node, branch=branch)
+                separated.nodes[twin.key] = twin
+
+        for edge in self.edges:
+            separated.edges.append(replace(edge, waypoints=list(edge.waypoints)))
+        return separated
+
     def to_dict(self) -> dict:
         return {
             "project_name": self.project_name,
             "source": self.source,
-            "nodes": {name: node.to_dict() for name, node in self.nodes.items()},
+            "nodes": {key: node.to_dict() for key, node in self.nodes.items()},
             "edges": [edge.to_dict() for edge in self.edges],
         }
 
@@ -248,7 +376,8 @@ class ThermalNetworkModel:
     def from_dict(cls, data: dict) -> "ThermalNetworkModel":
         model = cls(project_name=data["project_name"], source=data.get("source", "не указан"))
         for node_data in data.get("nodes", {}).values():
-            model.nodes[node_data["name"]] = NetworkNode.from_dict(node_data)
+            node = NetworkNode.from_dict(node_data)
+            model.nodes[node.key] = node
         for edge_data in data.get("edges", []):
             model.edges.append(NetworkEdge.from_dict(edge_data))
         return model

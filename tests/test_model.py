@@ -260,3 +260,166 @@ def test_waypoints_survive_json_roundtrip_unchanged():
 
     assert restored.to_dict() == model.to_dict()
     assert restored.edges[0].waypoints == [(0.0, 70.0, 27.5)]
+
+
+# ---------------------------------------------------------------------------
+# Задача 26: раздельные графы подачи и обратки (решение предварительное)
+#
+# Причина: в эталоне Т1 и Т2 разведены на 0.70 м, а общий узел кладёт обе нитки
+# в одну точку — половина разноса (0.35 м) больше допуска приёмки 0.2 м.
+# ---------------------------------------------------------------------------
+
+
+def make_two_branch_model() -> ThermalNetworkModel:
+    """Две нитки на общих узлах — то, как модель выглядела до задачи 26."""
+    model = make_two_node_model()
+    for branch in ("supply", "return"):
+        model.add_edge(NetworkEdge(
+            start_node="УТ-1а", end_node="ТК-2", branch=branch,
+            diameter=400, length=145.30, material="Steel",
+            insulation="PPU+PE", laying_type="underground",
+        ))
+    return model
+
+
+def test_node_key_keeps_the_plain_name_for_a_shared_node():
+    """Общий узел не меняет ключ — старые датасеты читаются как раньше."""
+    node = NetworkNode(name="ТК-2", x=0, y=0, z_surface=30, z_pipe_bottom=28, node_type="chamber")
+
+    assert node.branch == "single"
+    assert node.key == "ТК-2"
+
+
+def test_twin_nodes_with_the_same_name_live_in_the_model_side_by_side():
+    model = ThermalNetworkModel(project_name="Раздельные нитки")
+    for branch in ("supply", "return"):
+        model.add_node(NetworkNode(
+            name="ТК-2", x=10.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0,
+            node_type="chamber", branch=branch,
+        ))
+
+    assert set(model.nodes) == {"ТК-2@supply", "ТК-2@return"}
+
+
+def test_duplicate_node_in_the_same_branch_is_still_rejected():
+    model = ThermalNetworkModel(project_name="Раздельные нитки")
+    node = NetworkNode(name="ТК-2", x=0, y=0, z_surface=30, z_pipe_bottom=28,
+                       node_type="chamber", branch="supply")
+    model.add_node(node)
+
+    with pytest.raises(ValueError):
+        model.add_node(NetworkNode(name="ТК-2", x=5, y=5, z_surface=30, z_pipe_bottom=28,
+                                   node_type="chamber", branch="supply"))
+
+
+def test_edge_prefers_its_own_branch_node_over_the_shared_one():
+    """Смешанная модель: общая камера и свой узел подачи — ребро берёт свой."""
+    model = ThermalNetworkModel(project_name="Смешанная")
+    model.add_node(NetworkNode(name="A", x=0, y=0, z_surface=30, z_pipe_bottom=28,
+                               node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=100, y=0, z_surface=30, z_pipe_bottom=27,
+                               node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=100, y=5, z_surface=30, z_pipe_bottom=26,
+                               node_type="chamber", branch="supply"))
+    edge = NetworkEdge(start_node="A", end_node="B", branch="supply", diameter=325,
+                       length=100.0, material="Steel", insulation="none",
+                       laying_type="underground")
+    model.add_edge(edge)
+
+    start, end = edge.resolve_nodes(model.nodes)
+
+    assert start.branch == "single"      # общий узел, своего для подачи нет
+    assert (end.branch, end.y) == ("supply", 5)  # свой узел подачи
+
+
+def test_edge_falls_back_to_the_shared_node_when_the_branch_has_none():
+    model = make_two_branch_model()
+
+    start, end = model.edges[0].resolve_nodes(model.nodes)
+
+    assert start.name == "УТ-1а" and start.branch == "single"
+    assert end.name == "ТК-2" and end.branch == "single"
+
+
+def test_unknown_node_is_reported_for_the_branch_it_was_looked_up_for():
+    model = ThermalNetworkModel(project_name="Пустая")
+    edge = NetworkEdge(start_node="НЕТ", end_node="ТОЖЕ НЕТ", branch="supply",
+                       diameter=100, length=10.0, material="Steel",
+                       insulation="none", laying_type="underground")
+
+    with pytest.raises(KeyError):
+        edge.resolve_nodes(model.nodes)
+
+
+def test_split_by_branch_gives_one_independent_model_per_branch():
+    model = make_two_branch_model()
+
+    parts = model.split_by_branch()
+
+    assert set(parts) == {"supply", "return"}
+    assert all(len(part.edges) == 1 for part in parts.values())
+    assert all(len(part.nodes) == 2 for part in parts.values())
+
+
+def test_split_by_branch_copies_nodes_so_the_parts_do_not_share_state():
+    """Раздельные графы: правка подачи не должна двигать обратку."""
+    model = make_two_branch_model()
+
+    parts = model.split_by_branch()
+    parts["supply"].nodes["УТ-1а"].y += 0.35
+
+    assert parts["return"].nodes["УТ-1а"].y == model.nodes["УТ-1а"].y
+    assert parts["supply"].nodes["УТ-1а"].y != model.nodes["УТ-1а"].y
+
+
+def test_separate_branches_turns_a_shared_node_into_twins():
+    model = make_two_branch_model()
+
+    separated = model.separate_branches()
+
+    assert set(separated.nodes) == {
+        "УТ-1а@supply", "УТ-1а@return", "ТК-2@supply", "ТК-2@return",
+    }
+    assert len(separated.edges) == 2
+
+
+def test_separate_branches_does_not_move_anything():
+    """Насколько разводить нитки — вопрос данных; код координаты не выдумывает."""
+    model = make_two_branch_model()
+
+    separated = model.separate_branches()
+
+    original = model.nodes["ТК-2"]
+    for branch in ("supply", "return"):
+        twin = separated.nodes[f"ТК-2@{branch}"]
+        assert (twin.x, twin.y, twin.z_pipe_bottom) == (original.x, original.y, original.z_pipe_bottom)
+
+
+def test_separate_branches_keeps_single_branch_networks_untouched():
+    """Однониточная сеть (ВК) раздваиваться не должна."""
+    model = make_model_with_edge()
+    model.edges[0].branch = "single"
+
+    separated = model.separate_branches()
+
+    assert set(separated.nodes) == set(model.nodes)
+
+
+def test_edges_of_separated_model_still_resolve_and_compute_slope():
+    model = make_two_branch_model().separate_branches()
+
+    for edge in model.edges:
+        start, end = edge.resolve_nodes(model.nodes)
+        assert start.branch == end.branch == edge.branch
+        assert edge.calculate_slope(model.nodes) == pytest.approx(
+            (start.z_pipe_bottom - end.z_pipe_bottom) / edge.length
+        )
+
+
+def test_separated_model_survives_json_roundtrip():
+    model = make_two_branch_model().separate_branches()
+
+    restored = ThermalNetworkModel.from_json(model.to_json())
+
+    assert set(restored.nodes) == set(model.nodes)
+    assert restored.to_dict() == model.to_dict()

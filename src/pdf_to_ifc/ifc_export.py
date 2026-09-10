@@ -498,7 +498,7 @@ def generate_ifc_from_network(
     site = sites[0]
     body_context = _find_body_context(file)
 
-    node_entities: Dict[str, "ifcopenshell.entity_instance"] = {}
+    node_entities: Dict[str, "ifcopenshell.entity_instance"] = {}  # ключ — node.key
     new_products = []
 
     for node in model.nodes.values():
@@ -509,14 +509,18 @@ def generate_ifc_from_network(
             )
         ifc_class, object_type = NODE_TYPE_TO_IFC[node.node_type]
 
+        # Узлы-двойники раздельных ниток (задача 26) носят одно имя, поэтому в
+        # IFC к нему добавляется нитка — иначе в вьюере две «ТК-2» без признака,
+        # какая из них подача. Общий узел (branch="single") имя не меняет.
+        suffix = "" if node.branch == "single" else f" ({node.branch})"
         entity = ifcopenshell.api.run(
-            "root.create_entity", file, ifc_class=ifc_class, name=node.name
+            "root.create_entity", file, ifc_class=ifc_class, name=f"{node.name}{suffix}"
         )
         entity.ObjectType = object_type
         entity.PredefinedType = NODE_TYPE_PREDEFINED_TYPE.get(node.node_type, "USERDEFINED")
         entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
 
-        node_entities[node.name] = entity
+        node_entities[node.key] = entity
         new_products.append(entity)
 
     for edge in model.edges:
