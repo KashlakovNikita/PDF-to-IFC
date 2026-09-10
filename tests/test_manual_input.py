@@ -202,3 +202,27 @@ def test_formatted_text_omits_unknown_pressure_and_temperature():
 
     assert "давление" not in dumped
     assert "температура" not in dumped
+
+
+def test_gost_designation_is_parsed_and_dumped_back():
+    """Задача 30: обозначение по ГОСТ содержит пробелы, поэтому в кавычках."""
+    text = """узел А: x=0 y=0 земля=30 лоток=28 тип=chamber
+узел Б: x=50 y=0 земля=30 лоток=27 тип=chamber
+участок А -> Б: ду=426 длина=50 материал=Сталь гост="Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"
+"""
+
+    model = parse_manual_text(text)
+    edge = model.edges[0]
+
+    assert edge.gost_designation == "Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"
+    assert edge.material == "Сталь"  # обозначение живёт рядом с материалом, не вместо
+    assert 'гост="Ст 426х9,0/560' in format_manual_text(model)
+
+
+def test_gost_designation_defaults_to_unknown():
+    text = """узел А: x=0 y=0 земля=30 лоток=28 тип=chamber
+узел Б: x=50 y=0 земля=30 лоток=27 тип=chamber
+участок А -> Б: ду=325 длина=50"""
+
+    assert parse_manual_text(text).edges[0].gost_designation is None
+    assert "гост" not in format_manual_text(parse_manual_text(text))

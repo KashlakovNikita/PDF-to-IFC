@@ -572,3 +572,24 @@ def test_pipe_pset_diameter_is_in_metres_and_dn_in_millimetres():
 
     assert properties["Диаметр"] == pytest.approx(0.426)
     assert properties["Условный проход"] == 426
+
+
+def test_pipe_pset_writes_gost_designation_as_naimenovanie():
+    """Задача 30: обозначение по ГОСТ — в свойстве «Наименование», как в эталоне."""
+    model = make_four_node_model()
+    designation = "Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"
+    for edge in model.edges:
+        edge.gost_designation = designation
+
+    file = generate_ifc_from_network(model)
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Наименование"] == designation
+    assert properties["Материал"] == "Steel"  # параллельно, а не взамен
+
+
+def test_pipe_pset_omits_naimenovanie_when_designation_is_unknown():
+    """Собирать обозначение из материала и изоляции нельзя — там нет ни стенки, ни ГОСТа."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    assert "Наименование" not in pipe_pset(file.by_type("IfcPipeSegment")[0])

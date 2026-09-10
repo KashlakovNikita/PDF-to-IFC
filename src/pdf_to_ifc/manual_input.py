@@ -37,11 +37,13 @@ AutoCAD, а координатной сетки в PDF нет вовсе. Инж
 Ключи узла: x, y, земля (z_surface), лоток (z_pipe_bottom), тип (node_type),
 нитка (branch — для раздельных графов задачи 26).
 Ключи участка: нитка, ду (диаметр, мм), длина (м), материал, изоляция,
-прокладка (тип прокладки), давление (МПа), температура (°C).
+прокладка (тип прокладки), давление (МПа), температура (°C), гост
+(обозначение трубы по ГОСТ; пишется в кавычках, потому что содержит пробелы:
+гост="Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020").
 
 Английские написания ключей тоже принимаются (x, y, z_surface, z_pipe_bottom,
 node_type, branch, dn, length, material, insulation, laying_type, pressure,
-temperature) — чтобы файл можно было писать в раскладке, которая под рукой.
+temperature, gost) — чтобы файл можно было писать в раскладке, которая под рукой.
 
 Ошибки
 -------
@@ -93,6 +95,8 @@ EDGE_KEYS = {
     "прокладка": "laying_type", "laying_type": "laying_type", "тип_прокладки": "laying_type",
     "давление": "pressure_mpa", "pressure": "pressure_mpa", "pressure_mpa": "pressure_mpa",
     "температура": "temperature_c", "temperature": "temperature_c", "temperature_c": "temperature_c",
+    "гост": "gost_designation", "обозначение": "gost_designation",
+    "gost": "gost_designation", "gost_designation": "gost_designation",
 }
 FLOAT_FIELDS = {"x", "y", "z_surface", "z_pipe_bottom", "length", "pressure_mpa", "temperature_c"}
 INT_FIELDS = {"diameter"}
@@ -251,6 +255,8 @@ def format_manual_text(model: ThermalNetworkModel) -> str:
             parts.append(f"давление={edge.pressure_mpa}")
         if edge.temperature_c is not None:
             parts.append(f"температура={edge.temperature_c}")
+        if edge.gost_designation:
+            parts.append(f'гост="{edge.gost_designation}"')
         lines.append(f"участок {edge.start_node} -> {edge.end_node}: " + " ".join(parts))
         for x, y, z in edge.waypoints:
             lines.append(f"    изгиб: {x:.3f} {y:.3f} {z:.3f}")
