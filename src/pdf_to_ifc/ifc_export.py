@@ -44,16 +44,108 @@ z_pipe_bottom) и включение в пространственную стр�
 ось Z локальной системы координат (Axis) направлена на end_node — тогда
 Depth extrusion'а вдоль локального Z корректно укладывает цилиндр между
 двумя узлами в глобальных координатах без ручного пересчёта вершин.
+
+Задача 32: отметка оси трубы, а не отметка лотка
+-------------------------------------------------
+`NetworkNode.z_pipe_bottom` — это отметка ЛОТКА, то есть низа трубы: так её
+пишут на профиле и так её снимают с чертежа. Ось трубы проходит выше лотка на
+радиус. Раньше экспорт клал ось прямо в z_pipe_bottom, из-за чего вся сеть
+оказывалась ниже проектной ровно на радиус.
+
+Это не теория: на реальных координатах из DWG сверка с эталоном показала
+систематическое занижение медианы Z на 0.25 м при расчётном радиусе 0.213 м
+для Ст426 (и 0.28 м по наружному диаметру оболочки 560 мм) — то есть ровно этот
+порядок величины. Теперь все точки оси поднимаются на `edge.diameter / 2000`
+(диаметр в мм -> радиус в метрах).
+
+Что поднимается вместе с осью: и трубы, и фитинги изгиба — отвод стоит на оси
+трубы, а не под ней. Что НЕ поднимается: узлы сети (камеры, опоры, арматура).
+Их отметка — это отметка сооружения, а не трубы, и поднимать её на радиус
+трубы неправильно.
+
+Оговорка, которую стоит помнить: радиус считается по DN, то есть по условному
+проходу. Для труб в ППУ-изоляции наружный диаметр оболочки больше (560 мм при
+DN 426), и если отметка лотка на чертеже дана по низу ИЗОЛЯЦИИ, а не по низу
+трубы, подъём получится меньше нужного примерно на 7 см. Точное правило —
+вопрос к проектировщику, и оно зафиксировано в отчёте как открытый вопрос.
+
+Задача 1 брифа (эта): изгибы трассы — waypoints
+------------------------------------------------
+Найденная причина расхождения геометрии с эталоном: труба вытягивалась на
+edge.length (реальная длина трубы из спецификации) вдоль ПРЯМОГО направления
+start_node -> end_node. На изогнутом участке length всегда больше прямого
+расстояния между узлами, поэтому цилиндр проезжал мимо конечного узла ровно
+на величину изгиба трассы. На синтетическом датасете (data/samples/parnas_*,
+координаты-placeholder'ы строго по прямой) это не проявлялось.
+
+Теперь одно ребро (NetworkEdge) разворачивается в ломаную
+start_node -> waypoints -> end_node (NetworkEdge.polyline) и генерируется:
+
+- по одному IfcPipeSegment на каждое ЗВЕНО ломаной, Depth = фактическое
+  расстояние между двумя соседними точками звена (а не edge.length целиком
+  на каждое звено — иначе каждый под-сегмент промахивался бы отдельно);
+- по одному IfcPipeFitting с PredefinedType="BEND" в каждой промежуточной
+  точке (в самих waypoints; в узлах сети фитинги не ставим — там уже стоят
+  объекты узлов из задачи 7).
+
+Сознательное решение по Depth для ПРЯМЫХ участков (waypoints пуст): остаётся
+edge.length, как было до этой задачи. Причина — требование обратной
+совместимости из брифа («пустой список = поведение без изменений»): пока
+трасса не оцифрована, спецификационная длина — единственный источник длины
+трубы, и подменять её прямым расстоянием между узлами значило бы молча
+терять данные спецификации. Как следствие, для прямого участка возможно
+расхождение length с геометрией; оно измеримо через
+NetworkEdge.length_mismatch() и попадает в отчёт scripts/validate_geometry.py.
+
+Задача 9 (эта): свойства труб — IfcPropertySet
+-----------------------------------------------
+На каждый IfcPipeSegment вешается один набор свойств PSET_NAME (см. константу
+ниже) со всем, что есть в доменной модели по этой нитке: DN, материал,
+изоляция, тип прокладки, нитка (подача/обратка), уклон, длины и — для
+разбитых по waypoints ниток — номер под-сегмента.
+
+Имена свойств — КИРИЛЛИЦА, как в эталонном файле проекта (решение заказчика,
+задача 9 переигрывается). Первая версия писала их латиницей в расчёте на
+IDS-проверку, но приёмка идёт по эталону, и свойство «Диаметр» должно
+называться «Диаметр», а не Diameter, иначе инженер сверяет два файла глазами и
+видит разные наборы.
+
+Важная деталь про единицы: в эталоне «Диаметр» записан в МЕТРАХ (0.426), а в
+спецификации диаметр называют условным проходом в миллиметрах (Ду 426). Поэтому
+пишутся оба свойства: «Диаметр» в метрах — как в эталоне, с тем же смыслом и в
+тех же единицах, и «Условный проход» в миллиметрах — как в спецификации. Дать
+свойству эталонное имя, но чужую единицу означало бы соврать в самом названии.
+
+Давление и температура (задача 29) пишутся, если заданы в модели, и не
+пишутся, если нет: «неизвестно» выражается отсутствием свойства. Ввести их
+можно руками через pdf_to_ifc.manual_input, пока нет экстрактора спецификации.
+Задача 28 (эта): габариты узлов. Арматура, футляры, каналы и точки подключения
+получают тело — габаритный короб по типовым размерам из pdf_to_ifc.node_sizes
+(измерены по эталонной модели проекта). Короб разворачивается ВДОЛЬ трассы, по
+направлению первой нитки, которая приходит в узел: положить футляр или канал
+поперёк трубы было бы хуже, чем не рисовать их вовсе. Узел, в который не
+приходит ни одна нитка, формы не получает — направление брать неоткуда.
+
+Камеры, уличные узлы, опоры и компенсаторы по-прежнему без формы: в эталоне их
+габариты есть, но они завязаны на конкретный типовой узел прокладки, и медиана
+по трём камерам — это не проектное решение (см. докстринг node_sizes).
+
+Обозначение трубы по ГОСТ (задача 30) пишется в свойство «Наименование» —
+так оно называется в эталоне ("Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ
+30732-2020"). В модели под него отдельное поле gost_designation, живущее
+рядом с material/insulation, а не вместо них.
 """
 
 from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Tuple, Union
 
 import ifcopenshell
 import ifcopenshell.api
+
+from pdf_to_ifc.node_sizes import NodeSize, size_for
 
 if TYPE_CHECKING:
     from pdf_to_ifc.model import ThermalNetworkModel
@@ -65,12 +157,54 @@ if TYPE_CHECKING:
 # PredefinedType; конкретный occurrence-класс для трассовых фитингов —
 # IfcPipeFitting (подтип IfcFlowFitting, так что file.by_type("IfcFlowFitting")
 # всё равно находит их через иерархию типов).
+# Задача 2 брифа: типы узлов расширены под то, что реально есть в эталонном
+# файле data/raw/ПРНС_ЛО_ТКР-ТС_У1_Э1_I2300.ifc. Там все 328 элементов —
+# IfcBuildingElementProxy (IFC2X3), а тип зашит в имя IfcPropertySet:
+# Труба (165), Неподвижная опора (70), Колодец (23), Трубопроводная арматура (18),
+# Канал (12), Точка подключения к внешним сетям (11), Футляр (10), Камера (3).
+# Прежняя таблица покрывала только камеры/уличные узлы/опоры/компенсаторы —
+# арматуры, каналов, футляров и точек подключения в ней не было вовсе.
+# Решение расширить модель принято человеком при постановке этой задачи
+# (эталон в proxy-классы мы при этом НЕ повторяем: генерируем осмысленные
+# IFC-классы, а сверка с эталоном идёт по геометрии, см. validate_geometry.py).
+#
+# Выбор классов:
+# - "valve" -> IfcValve: арматура в разрыве трассы, ровно как в дорожной карте (Ш1);
+# - "casing" -> IfcPipeFitting: футляр — не труба сети (через него труба проходит),
+#   отдельной сущности под футляр/кожух в IFC4.3 нет; помечаем ObjectType;
+# - "channel" -> IfcDistributionChamberElement: непроходной канал — это
+#   строительная конструкция вокруг трассы, ближайший осмысленный класс тот же,
+#   что у камер (в эталоне это тоже отдельный объект со своими габаритами);
+# - "connection_point" -> IfcDistributionPort — точка подключения к внешним
+#   сетям, это именно порт, а не элемент; см. оговорку в generate_ifc_from_network().
 NODE_TYPE_TO_IFC: Dict[str, tuple] = {
     "chamber": ("IfcDistributionChamberElement", "Камера"),
     "street_unit": ("IfcDistributionChamberElement", "Уличный узел"),
     "support": ("IfcPipeFitting", "Опора"),
     "compensator": ("IfcPipeFitting", "Компенсатор"),
+    "valve": ("IfcValve", "Трубопроводная арматура"),
+    "casing": ("IfcPipeFitting", "Футляр"),
+    "channel": ("IfcDistributionChamberElement", "Канал"),
+    "connection_point": ("IfcDistributionPort", "Точка подключения к внешним сетям"),
 }
+
+# PredefinedType узла по умолчанию — "USERDEFINED" (пояснение выше). Здесь
+# перечислены типы узлов, где у IFC-класса свой осмысленный перечислитель:
+# у IfcDistributionPort PredefinedType — это тип ПЕРЕНОСИМОЙ СРЕДЫ
+# (IfcDistributionPortTypeEnum: PIPE / DUCT / CABLE / ...), а не "тип объекта",
+# поэтому "USERDEFINED" был бы здесь потерей смысла: точка подключения
+# теплосети — это трубопроводный порт.
+NODE_TYPE_PREDEFINED_TYPE: Dict[str, str] = {
+    "connection_point": "PIPE",
+}
+
+
+# Имя набора свойств труб (задача 9). Собственное, не из стандартных Pset_*:
+# стандартный Pset_PipeSegmentTypeCommon описывает ТИП трубы, а не конкретный
+# участок, и не покрывает нужные нам поля (тип прокладки, нитка, изоляция
+# в терминах проекта). Префикс PdfToIfc — чтобы в вьюере было видно, что набор
+# сгенерирован этим инструментом, а не пришёл из исходной модели.
+PIPE_PSET_NAME = "Pset_PdfToIfc_PipeSegment"
 
 
 def create_minimal_project(
@@ -145,8 +279,23 @@ def _perpendicular_direction(unit_axis: Tuple[float, float, float]) -> Tuple[flo
     """Произвольный, но детерминированный вектор, перпендикулярный unit_axis —
     нужен как RefDirection для IfcAxis2Placement3D (для цилиндра ориентация
     вокруг своей оси не важна, важна только сама ось).
+
+    Опорный вектор — та ось глобальной системы координат, вдоль которой
+    unit_axis выражен слабее всего. Так проекция гарантированно не вырождается:
+    у единичного вектора минимальная по модулю компонента не превышает
+    1/sqrt(3), поэтому длина результата до нормировки >= sqrt(2/3) ~ 0.82.
+
+    Так было не всегда: до задачи 1 брифа опорный вектор выбирался обратным
+    условием — (1, 0, 0) при |unit_axis.x| > 0.999, то есть ровно тогда, когда
+    он почти совпадает с осью. Для трубы, идущей строго вдоль X, проекция
+    обращалась в ноль, и экспорт падал с "Нулевая длина направления трубы",
+    хотя направление было задано корректно. Тестовый датасет промахивался
+    мимо этого случая: шаг 50 м по X при перепаде отметок 0.1 м даёт
+    |unit_axis.x| = 0.9999980, то есть вырожденный, но всё же ненулевой
+    RefDirection. На реальной трассе с горизонтальными участками падало бы.
     """
-    reference = (1.0, 0.0, 0.0) if abs(unit_axis[0]) > 0.999 else (0.0, 0.0, 1.0)
+    smallest_axis = min(range(3), key=lambda i: abs(unit_axis[i]))
+    reference = tuple(1.0 if i == smallest_axis else 0.0 for i in range(3))
     dot = sum(a * b for a, b in zip(unit_axis, reference))
     raw = tuple(r - dot * a for r, a in zip(reference, unit_axis))
     return _unit_vector(raw)
@@ -213,6 +362,72 @@ def _pipe_body_representation(
     return file.create_entity("IfcProductDefinitionShape", Representations=[shape_representation])
 
 
+def _node_body_representation(
+    file: ifcopenshell.file,
+    body_context: "ifcopenshell.entity_instance",
+    size: NodeSize,
+) -> "ifcopenshell.entity_instance":
+    """Габаритный короб узла: прямоугольный профиль, вытянутый вдоль локальной Z.
+
+    Локальная Z у такого узла направлена вдоль трассы (см. generate_ifc_from_network),
+    поэтому профиль — это сечение поперёк трубы: ширина на высоту, а вытягивание
+    идёт на длину объекта. Профиль центрирован по ширине и поднят так, чтобы низ
+    короба лежал на отметке узла: узел размещается по z_pipe_bottom, то есть по
+    низу, а не по центру.
+    """
+    profile_origin = file.create_entity(
+        "IfcCartesianPoint", Coordinates=(0.0, float(size.height_m) / 2.0)
+    )
+    profile_position = file.create_entity("IfcAxis2Placement2D", Location=profile_origin)
+    profile = file.create_entity(
+        "IfcRectangleProfileDef",
+        ProfileType="AREA",
+        Position=profile_position,
+        XDim=float(size.width_m),
+        YDim=float(size.height_m),
+    )
+
+    extrusion_origin = file.create_entity(
+        "IfcCartesianPoint", Coordinates=(0.0, 0.0, -float(size.length_m) / 2.0)
+    )
+    extrusion_position = file.create_entity("IfcAxis2Placement3D", Location=extrusion_origin)
+    solid = file.create_entity(
+        "IfcExtrudedAreaSolid",
+        SweptArea=profile,
+        Position=extrusion_position,
+        ExtrudedDirection=file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+        Depth=float(size.length_m),
+    )
+    shape = file.create_entity(
+        "IfcShapeRepresentation",
+        ContextOfItems=body_context,
+        RepresentationIdentifier="Body",
+        RepresentationType="SweptSolid",
+        Items=[solid],
+    )
+    return file.create_entity("IfcProductDefinitionShape", Representations=[shape])
+
+
+def _node_directions(model: "ThermalNetworkModel") -> Dict[str, Tuple[float, float, float]]:
+    """Направление трассы в каждом узле — по первой нитке, которая в него приходит.
+
+    Берётся ближайшее к узлу звено ломаной: у ребра с точками изгиба направление
+    на дальний узел ничего не сказало бы о том, как труба выходит из ближнего.
+    """
+    directions: Dict[str, Tuple[float, float, float]] = {}
+    for edge in model.edges:
+        try:
+            start, end = edge.resolve_nodes(model.nodes)
+            points = edge.polyline(model.nodes)
+        except KeyError:
+            continue
+        first, second = points[0], points[1]
+        last, previous = points[-1], points[-2]
+        directions.setdefault(start.key, tuple(b - a for a, b in zip(first, second)))
+        directions.setdefault(end.key, tuple(b - a for a, b in zip(previous, last)))
+    return directions
+
+
 def _find_body_context(file: ifcopenshell.file) -> "ifcopenshell.entity_instance":
     body_contexts = [
         c for c in file.by_type("IfcGeometricRepresentationSubContext")
@@ -224,6 +439,153 @@ def _find_body_context(file: ifcopenshell.file) -> "ifcopenshell.entity_instance
             "из create_minimal_project() (задача 6) или создайте его сами."
         )
     return body_contexts[0]
+
+
+def _assign_pipe_pset(
+    file: ifcopenshell.file,
+    pipe: "ifcopenshell.entity_instance",
+    edge,
+    *,
+    segment_index: int,
+    segment_count: int,
+    segment_length_m: float,
+) -> "ifcopenshell.entity_instance":
+    """Повесить на трубу набор свойств PIPE_PSET_NAME (задача 9).
+
+    Что пишем и почему именно так:
+    - «Диаметр» — в МЕТРАХ, ровно как в эталоне (0.426), чтобы значения двух
+      файлов сравнивались напрямую;
+    - «Условный проход» — то же число в МИЛЛИМЕТРАХ (426), как его называют в
+      спецификации и на выносках чертежа. Это обозначение, а не измеренная
+      длина, и путать его с метровым радиусом геометрии нельзя;
+    - «Длина по спецификации» — длина всей нитки (одна на все под-сегменты);
+    - «Длина сегмента» — длина ЭТОГО под-сегмента по геометрии; для неразбитой
+      нитки совпадает с Depth экструзии;
+    - «Номер сегмента» / «Всего сегментов» — какой это по счёту под-сегмент
+      нитки, чтобы разбиение по waypoints читалось в вьюере, а не только в
+      имени объекта;
+    - «Участок» — "A->B", исходное ребро доменной модели.
+
+    Давление и температура (задача 29) пишутся из edge.pressure_mpa и
+    edge.temperature_c, если они заданы. Экстрактора под них по-прежнему нет
+    (в спецификации они в общих данных листа), но теперь их можно ввести
+    руками — см. pdf_to_ifc.manual_input. Если значения нет, свойство не
+    пишется вовсе: пустое свойство в IFC хуже отсутствующего, вьюер покажет
+    его как заполненное.
+
+    Обозначение по ГОСТ (задача 30) берётся из edge.gost_designation и пишется
+    в «Наименование» — под тем же именем, что в эталоне. Если поле не заполнено,
+    свойства нет: собирать обозначение из material и insulation нельзя, там нет
+    ни толщины стенки, ни диаметра оболочки, ни номера ГОСТа.
+    """
+    pset = ifcopenshell.api.run("pset.add_pset", file, product=pipe, name=PIPE_PSET_NAME)
+    properties = {
+        "Диаметр": float(edge.diameter) / 1000.0,     # м, как в эталоне
+        "Условный проход": int(edge.diameter),        # мм, как в спецификации
+        "Материал": str(edge.material),
+        "Изоляция": str(edge.insulation),
+        "Тип прокладки": str(edge.laying_type),
+        "Нитка": str(edge.branch),
+        "Длина по спецификации": float(edge.length),
+        "Длина сегмента": float(segment_length_m),
+        "Номер сегмента": int(segment_index),
+        "Всего сегментов": int(segment_count),
+        "Участок": f"{edge.start_node}->{edge.end_node}",
+    }
+    if edge.slope is not None:
+        properties["Уклон"] = float(edge.slope)
+    # Задача 29: давление и температура пишутся, только если они known. Пустое
+    # свойство в вьюере неотличимо от заполненного, поэтому «неизвестно»
+    # выражается отсутствием свойства, а не нулём или прочерком.
+    if edge.pressure_mpa is not None:
+        properties["Давление"] = float(edge.pressure_mpa)
+    if edge.temperature_c is not None:
+        properties["Температура"] = float(edge.temperature_c)
+    # Задача 30: обозначение по ГОСТ пишется под тем же именем, что в эталоне
+    # («Наименование»), — там лежит ровно эта строка вида
+    # "Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020".
+    if edge.gost_designation:
+        properties["Наименование"] = str(edge.gost_designation)
+    ifcopenshell.api.run("pset.edit_pset", file, pset=pset, properties=properties)
+    return pset
+
+
+def _create_edge_products(
+    file: ifcopenshell.file,
+    body_context: "ifcopenshell.entity_instance",
+    model: "ThermalNetworkModel",
+    edge,
+) -> List["ifcopenshell.entity_instance"]:
+    """Развернуть одну нитку (NetworkEdge) в IFC-объекты: трубы + фитинги изгибов.
+
+    Ломаная берётся из edge.polyline(model.nodes) — это start_node, затем
+    waypoints по порядку, затем end_node. Для прямого участка (waypoints пуст)
+    в ломаной ровно две точки, значит создаётся один IfcPipeSegment с прежним
+    именем и прежним Depth=edge.length — поведение до задачи 1 брифа
+    сохраняется байт в байт.
+
+    Для изогнутого участка:
+    - на каждое звено ломаной свой IfcPipeSegment, Depth = длина ЭТОГО звена;
+      имя получает суффикс " [i/n]", чтобы под-сегменты одной нитки было видно
+      в вьюере как одну нитку, а не как n безымянных труб;
+    - в каждой промежуточной точке — IfcPipeFitting с PredefinedType="BEND".
+      Фитинги ставятся только в waypoints: в узлах сети (start_node/end_node)
+      уже стоят объекты узлов из задачи 7, дублировать их фитингом нельзя.
+    """
+    radius_m = edge.diameter / 1000.0 / 2.0
+    # Задача 32: z_pipe_bottom — отметка ЛОТКА, ось трубы выше неё на радиус.
+    # Поднимаются все точки ломаной, а не только первая: подними одну — труба
+    # поедет наклонно, и стык с соседним сегментом разойдётся.
+    points = [(x, y, z + radius_m) for x, y, z in edge.polyline(model.nodes)]
+    segment_count = len(points) - 1
+    suffix = "" if edge.branch == "single" else f" ({edge.branch})"
+    base_name = f"{edge.start_node}->{edge.end_node}{suffix}"
+
+    products: List["ifcopenshell.entity_instance"] = []
+
+    for index, (segment_start, segment_end) in enumerate(zip(points, points[1:]), start=1):
+        direction = tuple(b - a for a, b in zip(segment_start, segment_end))
+        # Для прямого участка длина берётся из спецификации (обратная
+        # совместимость, см. докстринг модуля), для звена ломаной — фактическое
+        # расстояние между его концами.
+        depth_m = edge.length if segment_count == 1 else math.dist(segment_start, segment_end)
+        name = base_name if segment_count == 1 else f"{base_name} [{index}/{segment_count}]"
+
+        pipe = ifcopenshell.api.run(
+            "root.create_entity", file, ifc_class="IfcPipeSegment", name=name
+        )
+        pipe.PredefinedType = "USERDEFINED"
+        pipe.ObjectType = "Труба"
+        pipe.ObjectPlacement = _oriented_placement(file, segment_start, direction)
+        pipe.Representation = _pipe_body_representation(
+            file, body_context, radius_m=radius_m, depth_m=depth_m
+        )
+        _assign_pipe_pset(
+            file,
+            pipe,
+            edge,
+            segment_index=index,
+            segment_count=segment_count,
+            segment_length_m=depth_m,
+        )
+        products.append(pipe)
+
+    # Отвод стоит на оси трубы, поэтому поднимается вместе с ней (задача 32).
+    for index, waypoint in enumerate(
+        ((x, y, z + radius_m) for x, y, z in edge.waypoints), start=1
+    ):
+        bend = ifcopenshell.api.run(
+            "root.create_entity",
+            file,
+            ifc_class="IfcPipeFitting",
+            name=f"{base_name} изгиб {index}",
+        )
+        bend.PredefinedType = "BEND"
+        bend.ObjectType = "Поворот трассы"
+        bend.ObjectPlacement = _local_placement(file, *waypoint)
+        products.append(bend)
+
+    return products
 
 
 def generate_ifc_from_network(
@@ -240,8 +602,19 @@ def generate_ifc_from_network(
     в который добавляются новые элементы.
 
     Трубы получают геометрию (задача 8) — цилиндр по DN, ориентированный
-    от start_node к end_node. Камеры и фитинги — только ObjectPlacement,
-    без формы (геометрия камер не входит ни в задачу 7, ни в задачу 8).
+    вдоль звена трассы. Камеры и фитинги — только ObjectPlacement, без формы
+    (геометрия камер не входит ни в задачу 7, ни в задачу 8).
+
+    Нитка с waypoints (задача 1 брифа) разворачивается в несколько
+    IfcPipeSegment по звеньям ломаной плюс IfcPipeFitting BEND в точках
+    изгиба — см. _create_edge_products().
+
+    Оговорка по "connection_point": он отображается в IfcDistributionPort,
+    а порт по схеме не является IfcProduct-элементом пространственной
+    структуры — в IfcRelContainedInSpatialStructure он не попадает и
+    привязывается к площадке только косвенно. Полноценная привязка порта к
+    элементу (IfcRelConnectsPortToElement) появится тогда, когда в модели
+    будет, к чему его привязывать, — сейчас такой связи в доменной модели нет.
     """
     if file is None:
         file = create_minimal_project(project_name=model.project_name, site_name=site_name)
@@ -255,7 +628,8 @@ def generate_ifc_from_network(
     site = sites[0]
     body_context = _find_body_context(file)
 
-    node_entities: Dict[str, "ifcopenshell.entity_instance"] = {}
+    node_directions = _node_directions(model)
+    node_entities: Dict[str, "ifcopenshell.entity_instance"] = {}  # ключ — node.key
     new_products = []
 
     for node in model.nodes.values():
@@ -266,48 +640,45 @@ def generate_ifc_from_network(
             )
         ifc_class, object_type = NODE_TYPE_TO_IFC[node.node_type]
 
+        # Узлы-двойники раздельных ниток (задача 26) носят одно имя, поэтому в
+        # IFC к нему добавляется нитка — иначе в вьюере две «ТК-2» без признака,
+        # какая из них подача. Общий узел (branch="single") имя не меняет.
+        suffix = "" if node.branch == "single" else f" ({node.branch})"
         entity = ifcopenshell.api.run(
-            "root.create_entity", file, ifc_class=ifc_class, name=node.name
+            "root.create_entity", file, ifc_class=ifc_class, name=f"{node.name}{suffix}"
         )
         entity.ObjectType = object_type
-        entity.PredefinedType = "USERDEFINED"
-        entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
+        entity.PredefinedType = NODE_TYPE_PREDEFINED_TYPE.get(node.node_type, "USERDEFINED")
 
-        node_entities[node.name] = entity
+        # Задача 28: узлы с известными типовыми габаритами получают тело,
+        # развёрнутое вдоль трассы. Остальные — только точку размещения, как было.
+        size = size_for(node.node_type)
+        direction = node_directions.get(node.key)
+        if size is not None and direction is not None:
+            entity.ObjectPlacement = _oriented_placement(
+                file, (node.x, node.y, node.z_pipe_bottom), direction
+            )
+            entity.Representation = _node_body_representation(file, body_context, size)
+        else:
+            entity.ObjectPlacement = _local_placement(file, node.x, node.y, node.z_pipe_bottom)
+
+        node_entities[node.key] = entity
         new_products.append(entity)
 
     for edge in model.edges:
-        start = model.nodes[edge.start_node]
-        end = model.nodes[edge.end_node]
-        origin = (start.x, start.y, start.z_pipe_bottom)
-        direction = (
-            end.x - start.x,
-            end.y - start.y,
-            end.z_pipe_bottom - start.z_pipe_bottom,
-        )
+        new_products.extend(_create_edge_products(file, body_context, model, edge))
 
-        suffix = "" if edge.branch == "single" else f" ({edge.branch})"
-        pipe = ifcopenshell.api.run(
-            "root.create_entity",
+    # IfcDistributionPort не является элементом пространственной структуры —
+    # spatial.assign_container на нём падает по схеме, поэтому порты сюда не
+    # попадают (см. оговорку в докстринге).
+    containable = [p for p in new_products if not p.is_a("IfcPort")]
+    if containable:
+        ifcopenshell.api.run(
+            "spatial.assign_container",
             file,
-            ifc_class="IfcPipeSegment",
-            name=f"{edge.start_node}->{edge.end_node}{suffix}",
+            relating_structure=site,
+            products=containable,
         )
-        pipe.PredefinedType = "USERDEFINED"
-        pipe.ObjectType = "Труба"
-        pipe.ObjectPlacement = _oriented_placement(file, origin, direction)
-        pipe.Representation = _pipe_body_representation(
-            file, body_context, radius_m=edge.diameter / 1000.0 / 2.0, depth_m=edge.length
-        )
-
-        new_products.append(pipe)
-
-    ifcopenshell.api.run(
-        "spatial.assign_container",
-        file,
-        relating_structure=site,
-        products=new_products,
-    )
 
     return file
 

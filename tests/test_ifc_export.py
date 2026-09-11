@@ -9,8 +9,16 @@ ifcopenshell нельзя установить в песочнице, где п�
 import ifcopenshell
 import pytest
 
-from pdf_to_ifc.ifc_export import create_minimal_project, generate_ifc_from_network, save
+import ifcopenshell.util.element
+
+from pdf_to_ifc.ifc_export import (
+    PIPE_PSET_NAME,
+    create_minimal_project,
+    generate_ifc_from_network,
+    save,
+)
 from pdf_to_ifc.model import NetworkEdge, NetworkNode, ThermalNetworkModel
+from pdf_to_ifc.node_sizes import size_for
 
 
 def test_create_minimal_project_has_project_and_site():
@@ -130,8 +138,8 @@ def test_generate_ifc_places_pipe_at_start_node_oriented_towards_end_node():
     pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
     placement = pipe.ObjectPlacement.RelativePlacement
 
-    # УТ-1 (0, 0, 27.0) -> Н1 (50, 0, 26.9)
-    assert placement.Location.Coordinates == pytest.approx((0.0, 0.0, 27.0))
+    # УТ-1 (0, 0, 27.0) -> Н1 (50, 0, 26.9); ось поднята на радиус DN 426.
+    assert placement.Location.Coordinates == pytest.approx((0.0, 0.0, 27.0 + 426 / 2000))
     dx, dy, dz = (50.0, 0.0, -0.1)
     length = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
     assert placement.Axis.DirectionRatios == pytest.approx((dx / length, dy / length, dz / length))
@@ -195,6 +203,16 @@ def test_pipe_solid_is_extruded_circle_with_radius_from_dn_and_depth_from_length
     assert solid.ExtrudedDirection.DirectionRatios == pytest.approx((0.0, 0.0, 1.0))
 
 
+def test_pipe_axis_origin_is_raised_from_bottom_by_pipe_radius():
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
+
+    origin = tuple(pipe.ObjectPlacement.RelativePlacement.Location.Coordinates)
+
+    assert origin == pytest.approx((0.0, 0.0, 27.0 + 426 / 2000))
+    assert origin[2] != pytest.approx(27.0)
+
+
 def test_pipe_geometry_rejects_zero_length_direction():
     model = ThermalNetworkModel(project_name="Тест")
     model.add_node(NetworkNode(name="A", x=0, y=0, z_surface=0, z_pipe_bottom=0, node_type="chamber"))
@@ -218,3 +236,508 @@ def test_chambers_and_fittings_have_no_geometry_representation():
     for fitting in file.by_type("IfcPipeFitting"):
         assert fitting.Representation is None
 
+
+# ---------------------------------------------------------------------------
+# Задача 1 брифа: waypoints — труба идёт по ломаной, а не мимо конечного узла
+#
+# Ключевой кейс, которого раньше не было в покрытии: length (спецификация)
+# заведомо больше прямого расстояния между узлами. Старый код на таком ребре
+# создавал ОДИН цилиндр длиной edge.length вдоль прямого направления и
+# промахивался мимо конечного узла ровно на величину изгиба — тесты ниже
+# на нём падают.
+# ---------------------------------------------------------------------------
+
+
+def pipe_axis_endpoints(pipe):
+    """Начало и конец оси трубы в глобальных координатах.
+
+    Считается из ObjectPlacement (Location + Axis) и Depth экструзии — то есть
+    ровно так, как эту трубу увидит вьюер, а не так, как её задумывал код.
+    """
+    placement = pipe.ObjectPlacement.RelativePlacement
+    start = tuple(placement.Location.Coordinates)
+    axis = tuple(placement.Axis.DirectionRatios)
+    depth = pipe.Representation.Representations[0].Items[0].Depth
+    end = tuple(s + a * depth for s, a in zip(start, axis))
+    return start, end
+
+
+def make_bent_model() -> ThermalNetworkModel:
+    """Г-образный участок с двумя точками изгиба между двумя узлами.
+
+    ТК-1 (0, 0, 28) -> (10, 20, 28) -> (20, 20, 28) -> ТК-2 (30, 0, 28).
+    Прямое расстояние между узлами 30 м, длина ломаной ~54.7 м, а в
+    спецификации стоит 60.0 м — все три величины разные намеренно.
+    """
+    model = ThermalNetworkModel(project_name="Изгибы")
+    model.add_node(NetworkNode(name="ТК-1", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_node(NetworkNode(name="ТК-2", x=30.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_edge(NetworkEdge(
+        start_node="ТК-1", end_node="ТК-2", branch="supply",
+        diameter=325, length=60.0, material="Steel", insulation="PPU+PE",
+        laying_type="underground", waypoints=[(10.0, 20.0, 28.0), (20.0, 20.0, 28.0)],
+    ))
+    return model
+
+
+def test_edge_with_waypoints_is_split_into_one_pipe_per_polyline_link():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = file.by_type("IfcPipeSegment")
+    names = {p.Name for p in pipes}
+
+    assert len(pipes) == 3
+    assert names == {
+        "ТК-1->ТК-2 (supply) [1/3]",
+        "ТК-1->ТК-2 (supply) [2/3]",
+        "ТК-1->ТК-2 (supply) [3/3]",
+    }
+
+
+def test_pipe_chain_starts_at_start_node_and_ends_exactly_at_end_node():
+    """Тот самый промах мимо конечного узла: старый код давал конец (60, 0, 28)."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    first_start, _ = pipe_axis_endpoints(pipes[0])
+    _, last_end = pipe_axis_endpoints(pipes[-1])
+
+    radius_m = 325 / 2000
+    assert first_start == pytest.approx((0.0, 0.0, 28.0 + radius_m))
+    assert last_end == pytest.approx((30.0, 0.0, 28.0 + radius_m))
+
+
+def test_each_sub_segment_is_as_long_as_its_own_polyline_link():
+    """Depth под-сегмента — расстояние между его концами, а не edge.length целиком."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    depths = [p.Representation.Representations[0].Items[0].Depth for p in pipes]
+
+    diagonal = (10.0 ** 2 + 20.0 ** 2) ** 0.5
+    assert depths == pytest.approx([diagonal, 10.0, diagonal])
+    assert sum(depths) != pytest.approx(60.0)  # спецификация и геометрия расходятся
+
+
+def test_sub_segments_are_joined_end_to_end_without_gaps():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    for previous, following in zip(pipes, pipes[1:]):
+        _, previous_end = pipe_axis_endpoints(previous)
+        following_start, _ = pipe_axis_endpoints(following)
+        assert previous_end == pytest.approx(following_start)
+
+
+def test_bend_fitting_is_created_in_every_waypoint():
+    file = generate_ifc_from_network(make_bent_model())
+
+    bends = [f for f in file.by_type("IfcPipeFitting") if f.PredefinedType == "BEND"]
+    locations = {tuple(b.ObjectPlacement.RelativePlacement.Location.Coordinates) for b in bends}
+
+    assert len(bends) == 2
+    radius_m = 325 / 2000
+    assert locations == {(10.0, 20.0, 28.0 + radius_m), (20.0, 20.0, 28.0 + radius_m)}
+    assert {b.Name for b in bends} == {"ТК-1->ТК-2 (supply) изгиб 1", "ТК-1->ТК-2 (supply) изгиб 2"}
+
+
+def test_bend_fittings_are_contained_in_the_site():
+    file = generate_ifc_from_network(make_bent_model())
+
+    site = file.by_type("IfcSite")[0]
+    rels = [r for r in file.by_type("IfcRelContainedInSpatialStructure") if r.RelatingStructure == site]
+    contained = {product.Name for rel in rels for product in rel.RelatedElements}
+
+    assert "ТК-1->ТК-2 (supply) изгиб 1" in contained
+    assert "ТК-1->ТК-2 (supply) [1/3]" in contained
+
+
+def test_edge_without_waypoints_keeps_previous_single_pipe_behaviour():
+    """Обратная совместимость: пустой waypoints = ровно то, что было до задачи 1."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    pipes = file.by_type("IfcPipeSegment")
+    bends = [f for f in file.by_type("IfcPipeFitting") if f.PredefinedType == "BEND"]
+
+    assert len(pipes) == 2
+    assert {p.Name for p in pipes} == {"УТ-1->Н1 (supply)", "УТ-1->Н1 (return)"}
+    assert bends == []
+
+
+def test_horizontal_pipe_along_x_axis_does_not_break_placement():
+    """Регресс: труба строго вдоль оси X роняла экспорт нулевым RefDirection.
+
+    _perpendicular_direction() выбирал опорный вектор (1, 0, 0) именно тогда,
+    когда ось трубы почти совпадает с X, — проекция вырождалась в ноль.
+    Датасет с шагом 50 м и перепадом 0.1 м промахивался мимо этого случая
+    на 2e-6, поэтому в тесты баг не попадал.
+    """
+    model = ThermalNetworkModel(project_name="Горизонталь")
+    model.add_node(NetworkNode(name="A", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=50.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_edge(NetworkEdge(
+        start_node="A", end_node="B", diameter=100, length=50.0, material="Steel",
+        insulation="none", laying_type="underground",
+    ))
+
+    file = generate_ifc_from_network(model)
+
+    placement = file.by_type("IfcPipeSegment")[0].ObjectPlacement.RelativePlacement
+    axis = placement.Axis.DirectionRatios
+    ref = placement.RefDirection.DirectionRatios
+
+    assert axis == pytest.approx((1.0, 0.0, 0.0))
+    assert sum(a * r for a, r in zip(axis, ref)) == pytest.approx(0.0, abs=1e-9)
+    assert sum(r * r for r in ref) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Задача 2 брифа: типы узлов из эталонного IFC (арматура, футляр, канал,
+# точка подключения к внешним сетям)
+# ---------------------------------------------------------------------------
+
+
+def make_reference_node_types_model() -> ThermalNetworkModel:
+    model = ThermalNetworkModel(project_name="Типы узлов эталона")
+    model.add_node(NetworkNode(name="ЗД-1", x=0.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="valve"))
+    model.add_node(NetworkNode(name="Ф-1", x=10.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="casing"))
+    model.add_node(NetworkNode(name="КН-1", x=20.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="channel"))
+    model.add_node(NetworkNode(name="ТВ-1", x=30.0, y=0.0, z_surface=30.0, z_pipe_bottom=28.0, node_type="connection_point"))
+    return model
+
+
+def test_valve_casing_channel_and_connection_point_get_their_ifc_classes():
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    assert [v.Name for v in file.by_type("IfcValve")] == ["ЗД-1"]
+    assert "Ф-1" in {f.Name for f in file.by_type("IfcPipeFitting")}
+    assert "КН-1" in {c.Name for c in file.by_type("IfcDistributionChamberElement")}
+    assert [p.Name for p in file.by_type("IfcDistributionPort")] == ["ТВ-1"]
+
+
+def test_connection_point_port_gets_pipe_predefined_type_not_userdefined():
+    """У порта PredefinedType — тип среды (PIPE), а не 'тип объекта'."""
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    port = file.by_type("IfcDistributionPort")[0]
+    assert port.PredefinedType == "PIPE"
+    assert port.ObjectType == "Точка подключения к внешним сетям"
+
+
+def test_port_is_not_put_into_spatial_structure():
+    """IfcPort не элемент пространственной структуры — в контейнер площадки не идёт."""
+    file = generate_ifc_from_network(make_reference_node_types_model())
+
+    site = file.by_type("IfcSite")[0]
+    rels = [r for r in file.by_type("IfcRelContainedInSpatialStructure") if r.RelatingStructure == site]
+    contained = {product.Name for rel in rels for product in rel.RelatedElements}
+
+    assert contained == {"ЗД-1", "Ф-1", "КН-1"}
+
+
+def test_model_with_new_node_types_saves_and_reopens(tmp_path):
+    file = generate_ifc_from_network(make_reference_node_types_model())
+    path = tmp_path / "node_types.ifc"
+
+    save(file, path)
+    reopened = ifcopenshell.open(str(path))
+
+    assert len(reopened.by_type("IfcValve")) == 1
+    assert len(reopened.by_type("IfcDistributionPort")) == 1
+
+
+# ---------------------------------------------------------------------------
+# Задача 9: IfcPropertySet на трубах (DN, материал, изоляция, ...)
+# ---------------------------------------------------------------------------
+
+
+def pipe_pset(pipe) -> dict:
+    """Свойства трубы из набора PIPE_PSET_NAME, без служебного 'id'."""
+    import ifcopenshell.util.element
+
+    properties = dict(ifcopenshell.util.element.get_psets(pipe)[PIPE_PSET_NAME])
+    properties.pop("id", None)
+    return properties
+
+
+def test_every_pipe_gets_the_property_set():
+    file = generate_ifc_from_network(make_four_node_model())
+
+    for pipe in file.by_type("IfcPipeSegment"):
+        assert PIPE_PSET_NAME in ifcopenshell.util.element.get_psets(pipe)
+
+
+def test_pipe_pset_carries_dn_material_insulation_and_laying_type():
+    """Имена свойств — кириллицей, как в эталоне (задача 9 переигрывается)."""
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
+
+    properties = pipe_pset(pipe)
+
+    assert properties["Условный проход"] == 426  # мм, как в спецификации
+    assert properties["Диаметр"] == pytest.approx(0.426)  # м, как в эталоне
+    assert properties["Материал"] == "Steel"
+    assert properties["Изоляция"] == "PUR-OC"
+    assert properties["Тип прокладки"] == "overhead"
+    assert properties["Нитка"] == "supply"
+    assert properties["Участок"] == "УТ-1->Н1"
+    assert properties["Уклон"] == pytest.approx((27.0 - 26.9) / 50.0)
+
+
+def test_pipe_pset_does_not_invent_pressure_or_temperature():
+    """Давления и температуры в модели нет — свойства не выдумываются (задача 9)."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert "Давление" not in properties
+    assert "Температура" not in properties
+
+
+def test_pipe_pset_writes_pressure_and_temperature_when_they_are_known():
+    """Задача 29: заданные параметры теплоносителя попадают в свойства трубы."""
+    model = make_four_node_model()
+    for edge in model.edges:
+        edge.pressure_mpa = 1.6
+        edge.temperature_c = 130.0
+
+    file = generate_ifc_from_network(model)
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Давление"] == pytest.approx(1.6)
+    assert properties["Температура"] == pytest.approx(130.0)
+
+
+def test_sub_segments_carry_their_own_length_and_index_but_shared_spec_length():
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    properties = [pipe_pset(p) for p in pipes]
+    diagonal = (10.0 ** 2 + 20.0 ** 2) ** 0.5
+
+    assert [p["Номер сегмента"] for p in properties] == [1, 2, 3]
+    assert {p["Всего сегментов"] for p in properties} == {3}
+    assert [p["Длина сегмента"] for p in properties] == pytest.approx([diagonal, 10.0, diagonal])
+    assert {p["Длина по спецификации"] for p in properties} == {60.0}  # одна на нитку
+
+
+def test_pipe_pset_survives_save_and_reopen(tmp_path):
+    file = generate_ifc_from_network(make_four_node_model())
+    path = tmp_path / "psets.ifc"
+
+    save(file, path)
+    reopened = ifcopenshell.open(str(path))
+    pipe = next(p for p in reopened.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (return)")
+
+    assert pipe_pset(pipe)["Условный проход"] == 426
+
+
+def test_nodes_do_not_get_the_pipe_property_set():
+    """Набор свойств трубы — только на трубах; свойства узлов не в задаче 9."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    for chamber in file.by_type("IfcDistributionChamberElement"):
+        assert PIPE_PSET_NAME not in ifcopenshell.util.element.get_psets(chamber)
+
+
+# ---------------------------------------------------------------------------
+# Задача 26: узлы-двойники раздельных ниток в IFC
+# ---------------------------------------------------------------------------
+
+
+def test_branch_twin_nodes_get_the_branch_in_their_ifc_name():
+    """Две «ТК-2» без признака нитки неразличимы в вьюере."""
+    model = ThermalNetworkModel(project_name="Раздельные нитки")
+    for branch in ("supply", "return"):
+        model.add_node(NetworkNode(name="ТК-1", x=0.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber", branch=branch))
+        model.add_node(NetworkNode(name="ТК-2", x=50.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=27.0, node_type="chamber", branch=branch))
+        model.add_edge(NetworkEdge(start_node="ТК-1", end_node="ТК-2", branch=branch,
+                                   diameter=325, length=50.0, material="Steel",
+                                   insulation="PPU+PE", laying_type="underground"))
+
+    file = generate_ifc_from_network(model)
+    names = {c.Name for c in file.by_type("IfcDistributionChamberElement")}
+
+    assert names == {"ТК-1 (supply)", "ТК-1 (return)", "ТК-2 (supply)", "ТК-2 (return)"}
+
+
+def test_shared_node_keeps_its_bare_name_in_ifc():
+    file = generate_ifc_from_network(make_four_node_model())
+
+    assert {c.Name for c in file.by_type("IfcDistributionChamberElement")} == {"УТ-1", "ТК-2"}
+
+
+def test_pipe_pset_property_names_are_cyrillic_like_in_the_reference():
+    """Приёмка идёт по эталону: свойство «Диаметр» должно называться «Диаметр»."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert "Диаметр" in properties
+    assert "Материал" in properties
+    assert not any(name.isascii() for name in properties)
+
+
+def test_pipe_pset_diameter_is_in_metres_and_dn_in_millimetres():
+    """У эталонного имени должна быть эталонная единица, иначе имя врёт."""
+    file = generate_ifc_from_network(make_four_node_model())
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Диаметр"] == pytest.approx(0.426)
+    assert properties["Условный проход"] == 426
+
+
+def test_pipe_pset_writes_gost_designation_as_naimenovanie():
+    """Задача 30: обозначение по ГОСТ — в свойстве «Наименование», как в эталоне."""
+    model = make_four_node_model()
+    designation = "Ст 426х9,0/560 ППУ-ОЦ в изоляции по ГОСТ 30732-2020"
+    for edge in model.edges:
+        edge.gost_designation = designation
+
+    file = generate_ifc_from_network(model)
+    properties = pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+    assert properties["Наименование"] == designation
+    assert properties["Материал"] == "Steel"  # параллельно, а не взамен
+
+
+def test_pipe_pset_omits_naimenovanie_when_designation_is_unknown():
+    """Собирать обозначение из материала и изоляции нельзя — там нет ни стенки, ни ГОСТа."""
+    file = generate_ifc_from_network(make_four_node_model())
+
+    assert "Наименование" not in pipe_pset(file.by_type("IfcPipeSegment")[0])
+
+
+# ---------------------------------------------------------------------------
+# Задача 28: габариты узлов из эталонной модели
+# ---------------------------------------------------------------------------
+
+
+def make_sized_nodes_model() -> ThermalNetworkModel:
+    """Трасса вдоль оси Y с арматурой, футляром, каналом и точкой подключения."""
+    model = ThermalNetworkModel(project_name="Габариты узлов")
+    plan = [
+        ("ТК-1", "chamber", 0.0),
+        ("ЗД-1", "valve", 40.0),
+        ("Ф-1", "casing", 80.0),
+        ("КН-1", "channel", 120.0),
+        ("ТВ-1", "connection_point", 160.0),
+    ]
+    for name, node_type, y in plan:
+        model.add_node(NetworkNode(name=name, x=0.0, y=y, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type=node_type))
+    for (start, _, _), (end, _, _) in zip(plan, plan[1:]):
+        model.add_edge(NetworkEdge(start_node=start, end_node=end, diameter=325,
+                                   length=40.0, material="Steel", insulation="PPU+PE",
+                                   laying_type="underground_ducted"))
+    return model
+
+
+def node_solid(file, name):
+    entity = next(e for e in file.by_type("IfcProduct") if e.Name == name)
+    return entity, entity.Representation.Representations[0].Items[0]
+
+
+def test_valve_gets_a_box_with_the_reference_dimensions():
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    _, solid = node_solid(file, "ЗД-1")
+    size = size_for("valve")
+
+    assert solid.is_a("IfcExtrudedAreaSolid")
+    assert solid.SweptArea.is_a("IfcRectangleProfileDef")
+    assert solid.Depth == pytest.approx(size.length_m)
+    assert solid.SweptArea.XDim == pytest.approx(size.width_m)
+    assert solid.SweptArea.YDim == pytest.approx(size.height_m)
+
+
+def test_casing_channel_and_connection_point_also_get_bodies():
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    for name, node_type in (("Ф-1", "casing"), ("КН-1", "channel"), ("ТВ-1", "connection_point")):
+        _, solid = node_solid(file, name)
+        assert solid.Depth == pytest.approx(size_for(node_type).length_m)
+
+
+def test_sized_node_body_is_oriented_along_the_route():
+    """Футляр поперёк трубы — хуже, чем футляр без геометрии."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    entity, _ = node_solid(file, "Ф-1")
+    axis = entity.ObjectPlacement.RelativePlacement.Axis.DirectionRatios
+
+    assert axis == pytest.approx((0.0, 1.0, 0.0))  # трасса идёт вдоль Y
+
+
+def test_sized_node_box_sits_on_the_node_elevation():
+    """Узел размещается по отметке лотка, значит короб стоит на ней низом."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    _, solid = node_solid(file, "ЗД-1")
+
+    assert solid.SweptArea.Position.Location.Coordinates[1] == pytest.approx(
+        size_for("valve").height_m / 2
+    )
+
+
+def test_node_without_any_pipe_gets_no_body():
+    """Направление брать неоткуда — форму не выдумываем."""
+    model = ThermalNetworkModel(project_name="Одинокая арматура")
+    model.add_node(NetworkNode(name="ЗД-1", x=0.0, y=0.0, z_surface=30.0,
+                               z_pipe_bottom=28.0, node_type="valve"))
+
+    file = generate_ifc_from_network(model)
+
+    assert file.by_type("IfcValve")[0].Representation is None
+
+
+def test_chambers_and_supports_still_have_no_geometry():
+    """Их габариты в эталоне есть, но зависят от типового узла прокладки."""
+    file = generate_ifc_from_network(make_sized_nodes_model())
+
+    assert size_for("chamber") is None
+    assert next(e for e in file.by_type("IfcProduct") if e.Name == "ТК-1").Representation is None
+
+
+def test_lift_scales_with_diameter():
+    """Подъём — это радиус, а не константа: тонкая труба поднимается меньше (задача 32)."""
+    def axis_elevation(diameter: int) -> float:
+        model = ThermalNetworkModel(project_name="Подъём по диаметру")
+        model.add_node(NetworkNode(name="A", x=0.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber"))
+        model.add_node(NetworkNode(name="B", x=50.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber"))
+        model.add_edge(NetworkEdge(start_node="A", end_node="B", diameter=diameter,
+                                   length=50.0, material="Steel", insulation="none",
+                                   laying_type="underground"))
+        pipe = generate_ifc_from_network(model).by_type("IfcPipeSegment")[0]
+        return pipe.ObjectPlacement.RelativePlacement.Location.Coordinates[2]
+
+    assert axis_elevation(89) == pytest.approx(28.0 + 0.0445)
+    assert axis_elevation(426) == pytest.approx(28.0 + 0.213)
+
+
+def test_whole_polyline_is_lifted_so_sub_segments_still_join():
+    """Поднять только начало — труба поедет наклонно и стык разойдётся (задача 32)."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    for previous, following in zip(pipes, pipes[1:]):
+        _, previous_end = pipe_axis_endpoints(previous)
+        following_start, _ = pipe_axis_endpoints(following)
+        assert previous_end == pytest.approx(following_start)
+
+    starts = {round(pipe_axis_endpoints(p)[0][2], 6) for p in pipes}
+    assert starts == {round(28.0 + 325 / 2000, 6)}  # все звенья на одной отметке оси
+
+
+def test_nodes_stay_on_their_own_elevation_when_pipes_are_lifted():
+    """Отметка камеры — это отметка сооружения, её радиус трубы не поднимает."""
+    model = make_four_node_model()
+    file = generate_ifc_from_network(model)
+
+    chamber = next(e for e in file.by_type("IfcDistributionChamberElement") if e.Name == "ТК-2")
+
+    assert chamber.ObjectPlacement.RelativePlacement.Location.Coordinates[2] == pytest.approx(
+        model.nodes["ТК-2"].z_pipe_bottom
+    )
