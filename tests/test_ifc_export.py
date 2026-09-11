@@ -138,8 +138,8 @@ def test_generate_ifc_places_pipe_at_start_node_oriented_towards_end_node():
     pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
     placement = pipe.ObjectPlacement.RelativePlacement
 
-    # УТ-1 (0, 0, 27.0) -> Н1 (50, 0, 26.9)
-    assert placement.Location.Coordinates == pytest.approx((0.0, 0.0, 27.0))
+    # УТ-1 (0, 0, 27.0) -> Н1 (50, 0, 26.9); ось поднята на радиус DN 426.
+    assert placement.Location.Coordinates == pytest.approx((0.0, 0.0, 27.0 + 426 / 2000))
     dx, dy, dz = (50.0, 0.0, -0.1)
     length = (dx ** 2 + dy ** 2 + dz ** 2) ** 0.5
     assert placement.Axis.DirectionRatios == pytest.approx((dx / length, dy / length, dz / length))
@@ -201,6 +201,16 @@ def test_pipe_solid_is_extruded_circle_with_radius_from_dn_and_depth_from_length
     assert solid.SweptArea.Radius == pytest.approx(426 / 1000 / 2)
     assert solid.Depth == pytest.approx(50.0)
     assert solid.ExtrudedDirection.DirectionRatios == pytest.approx((0.0, 0.0, 1.0))
+
+
+def test_pipe_axis_origin_is_raised_from_bottom_by_pipe_radius():
+    file = generate_ifc_from_network(make_four_node_model())
+    pipe = next(p for p in file.by_type("IfcPipeSegment") if p.Name == "УТ-1->Н1 (supply)")
+
+    origin = tuple(pipe.ObjectPlacement.RelativePlacement.Location.Coordinates)
+
+    assert origin == pytest.approx((0.0, 0.0, 27.0 + 426 / 2000))
+    assert origin[2] != pytest.approx(27.0)
 
 
 def test_pipe_geometry_rejects_zero_length_direction():
@@ -292,8 +302,9 @@ def test_pipe_chain_starts_at_start_node_and_ends_exactly_at_end_node():
     first_start, _ = pipe_axis_endpoints(pipes[0])
     _, last_end = pipe_axis_endpoints(pipes[-1])
 
-    assert first_start == pytest.approx((0.0, 0.0, 28.0))
-    assert last_end == pytest.approx((30.0, 0.0, 28.0))
+    radius_m = 325 / 2000
+    assert first_start == pytest.approx((0.0, 0.0, 28.0 + radius_m))
+    assert last_end == pytest.approx((30.0, 0.0, 28.0 + radius_m))
 
 
 def test_each_sub_segment_is_as_long_as_its_own_polyline_link():
@@ -325,7 +336,8 @@ def test_bend_fitting_is_created_in_every_waypoint():
     locations = {tuple(b.ObjectPlacement.RelativePlacement.Location.Coordinates) for b in bends}
 
     assert len(bends) == 2
-    assert locations == {(10.0, 20.0, 28.0), (20.0, 20.0, 28.0)}
+    radius_m = 325 / 2000
+    assert locations == {(10.0, 20.0, 28.0 + radius_m), (20.0, 20.0, 28.0 + radius_m)}
     assert {b.Name for b in bends} == {"ТК-1->ТК-2 (supply) изгиб 1", "ТК-1->ТК-2 (supply) изгиб 2"}
 
 
@@ -685,3 +697,47 @@ def test_chambers_and_supports_still_have_no_geometry():
 
     assert size_for("chamber") is None
     assert next(e for e in file.by_type("IfcProduct") if e.Name == "ТК-1").Representation is None
+
+
+def test_lift_scales_with_diameter():
+    """Подъём — это радиус, а не константа: тонкая труба поднимается меньше (задача 32)."""
+    def axis_elevation(diameter: int) -> float:
+        model = ThermalNetworkModel(project_name="Подъём по диаметру")
+        model.add_node(NetworkNode(name="A", x=0.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber"))
+        model.add_node(NetworkNode(name="B", x=50.0, y=0.0, z_surface=30.0,
+                                   z_pipe_bottom=28.0, node_type="chamber"))
+        model.add_edge(NetworkEdge(start_node="A", end_node="B", diameter=diameter,
+                                   length=50.0, material="Steel", insulation="none",
+                                   laying_type="underground"))
+        pipe = generate_ifc_from_network(model).by_type("IfcPipeSegment")[0]
+        return pipe.ObjectPlacement.RelativePlacement.Location.Coordinates[2]
+
+    assert axis_elevation(89) == pytest.approx(28.0 + 0.0445)
+    assert axis_elevation(426) == pytest.approx(28.0 + 0.213)
+
+
+def test_whole_polyline_is_lifted_so_sub_segments_still_join():
+    """Поднять только начало — труба поедет наклонно и стык разойдётся (задача 32)."""
+    file = generate_ifc_from_network(make_bent_model())
+
+    pipes = sorted(file.by_type("IfcPipeSegment"), key=lambda p: p.Name)
+    for previous, following in zip(pipes, pipes[1:]):
+        _, previous_end = pipe_axis_endpoints(previous)
+        following_start, _ = pipe_axis_endpoints(following)
+        assert previous_end == pytest.approx(following_start)
+
+    starts = {round(pipe_axis_endpoints(p)[0][2], 6) for p in pipes}
+    assert starts == {round(28.0 + 325 / 2000, 6)}  # все звенья на одной отметке оси
+
+
+def test_nodes_stay_on_their_own_elevation_when_pipes_are_lifted():
+    """Отметка камеры — это отметка сооружения, её радиус трубы не поднимает."""
+    model = make_four_node_model()
+    file = generate_ifc_from_network(model)
+
+    chamber = next(e for e in file.by_type("IfcDistributionChamberElement") if e.Name == "ТК-2")
+
+    assert chamber.ObjectPlacement.RelativePlacement.Location.Coordinates[2] == pytest.approx(
+        model.nodes["ТК-2"].z_pipe_bottom
+    )

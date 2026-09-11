@@ -132,18 +132,23 @@ def test_generated_centerlines_land_exactly_on_the_model_polyline(tmp_path):
 
     centerlines, stats = load_generated_centerlines(path)
     endpoints = sorted(
-        tuple(np.round(point, 3))
+        tuple(float(value) for value in point)
         for centerline in centerlines
         for point in (centerline.start, centerline.end)
     )
-    expected = sorted(
-        tuple(np.round(np.array(point), 3))
-        for point in [(0, 0, 28), (10, 20, 28), (10, 20, 28), (20, 20, 28), (20, 20, 28), (30, 0, 28)]
-    )
+    # Ось трубы стоит на отметке лотка плюс радиус Ду 325 (задача 32), поэтому
+    # ждём 28.1625, а не 28.0. Сравнение с допуском, а не по округлённым
+    # кортежам: 28.1625 округляется в третьем знаке в обе стороны, и тест падал
+    # бы на банковском округлении, а не на геометрии.
+    axis_z = 28.0 + 325 / 2000
+    expected = sorted([
+        (0.0, 0.0, axis_z), (10.0, 20.0, axis_z), (10.0, 20.0, axis_z),
+        (20.0, 20.0, axis_z), (20.0, 20.0, axis_z), (30.0, 0.0, axis_z),
+    ])
 
     assert stats["pipes_total"] == 3
     assert stats["geometry_failed"] == 0
-    assert endpoints == expected
+    assert np.allclose(np.array(endpoints), np.array(expected), atol=1e-3)
 
 
 def test_generated_file_compared_with_itself_is_fully_within_tolerance(tmp_path):
