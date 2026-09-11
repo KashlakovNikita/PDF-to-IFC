@@ -49,19 +49,38 @@
 переставлены. Координаты плана сравнимы с эталоном напрямую, без привязки. Это
 ответ на открытый вопрос 1 отчёта, полученный измерением, а не предположением.
 
-Отметки высот из DWG взять не удалось
---------------------------------------
-Это стоит знать до того, как кто-то потратит на них день. На листе профилей
-значения отметок лежат в атрибутах LEVEL блоков-указателей: в определении блока
-стоит заглушка "0.000", а у 109 экземпляров атрибут пуст — это динамические поля
-AutoCAD, которые вычисляются при открытии чертежа и в DXF не материализуются
-(ODA File Converter их не считает). Текстом на листе выписаны 5 отметок из
-нескольких сотен. Поэтому z берётся из уже имеющегося датасета
-(data/samples/parnas_nodes.csv — там отметки сняты человеком с того же профиля и
-помечены как реальные), а узлы, которых в нём нет, в выгрузку не попадают.
-Восстанавливать отметки из положения блоков по вертикальному масштабу листа
-(Мв 1:100) можно, но это отдельная задача с калибровкой: делать её походя, без
-сверки с бумагой, нельзя — цифра получится правдоподобной и непроверяемой.
+Отметки высот: земля берётся с плана, лоток — нет
+--------------------------------------------------
+Отметки искались отдельно (задача 33), результат разный для двух величин.
+
+**Отметка земли (z_surface) — берётся из чертежа.** На плане есть слой
+«61_Отметки высоты поверхности» с 611 подписями съёмки, из них 146 лежат ближе
+5 м к трассе. Сверка с отметками, снятыми человеком: расхождение в пределах
+десятых долей метра (у ТК-3 подпись 28.32 при 28.30 в датасете). Скрипт берёт
+ближайшую подпись к узлу, если она не дальше --ground-radius (по умолчанию 5 м),
+иначе оставляет отметку из датасета.
+
+**Отметка лотка (z_pipe_bottom) — в DXF не нашлась.** Проверены все пять
+чертежей целиком: пространство модели, листы (paper space), определения блоков,
+атрибуты вхождений и тексты размеров. Что есть и почему не подходит:
+
+- лист профилей: значения лежат в атрибутах LEVEL блоков-указателей, в
+  определении блока заглушка "0.000", у 109 вхождений атрибут пуст. Это
+  динамические поля AutoCAD: они вычисляются при открытии чертежа и в DXF не
+  материализуются. Текстом выписаны 5 отметок из нескольких сотен;
+- на плане есть 48 подписей отметок на слое «32_Теплосеть» — но это
+  СУЩЕСТВУЮЩАЯ сеть (топооснова), и они систематически на 0.4..1.1 м выше
+  нашего лотка, то есть это верх или ось существующих труб, а не лоток
+  проектируемых;
+- на листе ТК есть отметки на слое «Pipe», но лист собран в собственных
+  координатах узлов, и связать их с планом автоматически не на чем.
+
+Вывод: отметки лотка нужно вводить руками (pdf_to_ifc.manual_input) либо
+восстанавливать калибровкой профиля по вертикальному масштабу (Мв 1:100) — это
+отдельная задача, и делать её походя, без сверки с бумагой, нельзя: цифра
+получится правдоподобной и непроверяемой. Поэтому z_pipe_bottom по-прежнему
+берётся из data/samples/parnas_nodes.csv, а узлы, которых там нет, в выгрузку
+не попадают.
 
 Что на выходе
 --------------
@@ -110,6 +129,17 @@ DEFAULT_OUT_DIR = REPO_ROOT / "data" / "derived"
 
 ROUTE_LAYER = "_ПР_Теплосеть"
 LABEL_LAYERS = ("_ПР_Теплосеть_1", "_ПР_Теплосеть", "_ПР_Теплосеть_1_ВТС")
+# Слой съёмочных отметок земли (задача 33). Отметок лотка такого слоя нет —
+# см. раздел про отметки в докстринге.
+GROUND_LEVEL_LAYER = "61_Отметки высоты поверхности"
+# Подпись отметки относится к узлу, если лежит не дальше этого. 5 м — это
+# примерно половина шага съёмочных точек вдоль трассы: дальше уже соседняя
+# отметка, и брать её значит подменить измерение соседним измерением.
+GROUND_RADIUS_M = 5.0
+# Отметки на плане пишут двумя-тремя знаками: 27.74, 28,30. Диапазон ограничен,
+# чтобы не поймать длины, диаметры и номера.
+LEVEL_TEXT_RE = re.compile(r"^\s*(\d{2}[.,]\d{1,2})\s*$")
+LEVEL_MIN_M, LEVEL_MAX_M = 10.0, 45.0
 
 # Марка узла на чертеже: ТК-2, УТ-1а, Н1, УК1, УП2 и т.п.
 NODE_MARK_RE = re.compile(r"^(ТК|УТ|УП|УК|Н)\s?-?\s?\d+[а-яa-z]?$", re.IGNORECASE)
@@ -329,6 +359,41 @@ def load_diameters(path: Path) -> Dict[Tuple[str, str], int]:
     return diameters
 
 
+def load_ground_levels(doc, layer: str = GROUND_LEVEL_LAYER) -> List[Tuple[Point, float]]:
+    """Съёмочные отметки земли с плана: (точка подписи, значение).
+
+    Берутся только подписи, которые целиком состоят из числа в правдоподобном
+    диапазоне отметок: на том же слое попадаются выноски и служебные надписи, и
+    выдёргивать из них числа регуляркой — верный способ намерить ерунды.
+    """
+    levels: List[Tuple[Point, float]] = []
+    for entity in doc.modelspace():
+        if entity.dxf.layer != layer or entity.dxftype() not in ("TEXT", "MTEXT"):
+            continue
+        raw = entity.plain_text() if entity.dxftype() == "MTEXT" else entity.dxf.text
+        match = LEVEL_TEXT_RE.match(raw or "")
+        if not match:
+            continue
+        value = float(match.group(1).replace(",", "."))
+        if not LEVEL_MIN_M <= value <= LEVEL_MAX_M:
+            continue
+        position = entity.dxf.insert
+        levels.append(((float(position[0]), float(position[1])), value))
+    return levels
+
+
+def nearest_ground_level(
+    point: Point, levels: List[Tuple[Point, float]], *, radius: float = GROUND_RADIUS_M
+) -> Optional[Tuple[float, float]]:
+    """Ближайшая отметка земли к точке: (значение, расстояние) или None."""
+    best: Optional[Tuple[float, float]] = None
+    for position, value in levels:
+        distance = math.dist(point, position)
+        if distance <= radius and (best is None or distance < best[1]):
+            best = (value, distance)
+    return best
+
+
 def load_elevations(path: Path) -> Dict[str, Tuple[float, float, str]]:
     """Отметки узлов из датасета: ключ -> (z_surface, z_pipe_bottom, node_type)."""
     elevations: Dict[str, Tuple[float, float, str]] = {}
@@ -385,8 +450,10 @@ def build_model(
     order: List[str],
     elevations: Dict[str, Tuple[float, float, str]],
     diameters: Dict[Tuple[str, str], int],
+    ground_levels: Optional[List[Tuple[Point, float]]] = None,
     *,
     snap_tolerance: float = NODE_SNAP_TOLERANCE_M,
+    ground_radius: float = GROUND_RADIUS_M,
 ) -> Tuple[ThermalNetworkModel, List[dict]]:
     """Собрать модель: узлы с плана, порядок с профиля, изгибы из нарисованной оси.
 
@@ -412,7 +479,16 @@ def build_model(
             skipped.append({"name": name, "reason": "нет отметки в датасете", "detail": ""})
             continue
         z_surface, z_pipe_bottom, node_type = elevations[key]
+        # Задача 33: отметку земли, если она есть на плане, берём из чертежа —
+        # это измерение, а не переписанное из датасета число. Отметка лотка
+        # такой замены не получает: её в чертеже нет (см. докстринг модуля).
+        ground_source = "датасет"
+        ground = nearest_ground_level(projection, ground_levels or [], radius=ground_radius)
+        if ground is not None:
+            ground_source = f"план, подпись в {ground[1]:.1f} м"
+            z_surface = ground[0]
         placed[key] = {
+            "ground_source": ground_source,
             "name": name, "chain": chain_index, "station": station,
             "x": projection[0], "y": projection[1], "offset": offset,
             "z_surface": z_surface, "z_pipe_bottom": z_pipe_bottom, "node_type": node_type,
@@ -420,7 +496,7 @@ def build_model(
 
     sequence = [placed[_normalise(name)] for name in order if _normalise(name) in placed]
     if not sequence:
-        return ThermalNetworkModel(project_name="Парнас (координаты из DWG)"), skipped
+        return ThermalNetworkModel(project_name="Парнас (координаты из DWG)"), skipped, []
 
     model = ThermalNetworkModel(
         project_name="Парнас (координаты из DWG)",
@@ -453,7 +529,7 @@ def build_model(
                 laying_type="underground_ducted", waypoints=list(waypoints),
             ))
 
-    return model, skipped
+    return model, skipped, list(placed.values())
 
 
 def write_csv(model: ThermalNetworkModel, out_dir: Path) -> Tuple[Path, Path]:
@@ -493,6 +569,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--route-layer", default=ROUTE_LAYER, help="слой с осью трассы")
     parser.add_argument("--elevations", type=Path, default=DEFAULT_ELEVATIONS,
                         help="CSV с отметками узлов (только читается)")
+    parser.add_argument("--ground-radius", type=float, default=GROUND_RADIUS_M,
+                        help="радиус поиска отметки земли на плане, м "
+                             f"(по умолчанию {GROUND_RADIUS_M}; 0 — не брать с плана)")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="куда класть выгрузку")
     args = parser.parse_args(argv)
 
@@ -513,7 +592,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     order = load_node_order(ezdxf.readfile(str(args.profile)))
     elevations = load_elevations(args.elevations)
     diameters = load_diameters(args.elevations.with_name("parnas_edges.csv"))
-    model, skipped = build_model(chains, labels, order, elevations, diameters)
+    ground_levels = load_ground_levels(plan)
+    model, skipped, placed_report = build_model(
+        chains, labels, order, elevations, diameters, ground_levels,
+        ground_radius=args.ground_radius,
+    )
 
     if not model.nodes:
         print("Ни один узел не удалось поставить на ось", file=sys.stderr)
@@ -535,6 +618,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
           f"  Y {min(y for _, y in coordinates):.1f}..{max(y for _, y in coordinates):.1f}")
     print(f"Марок на плане: {len(labels)}, порядок с профиля: {len(order)}, "
           f"узлов в модели: {len(model.nodes)}")
+    from_plan = sum(1 for node in placed_report if node["ground_source"] != "датасет")
+    print(f"Отметок земли: с плана {from_plan} из {len(placed_report)}, "
+          f"остальные из датасета; отметки лотка в чертеже отсутствуют (см. докстринг)")
     print(f"Участков: {len(supply)} (x2 нитки = {len(model.edges)}), "
           f"точек изгиба: {sum(len(e.waypoints) for e in supply)}, "
           f"без изгибов: {sum(1 for e in supply if not e.waypoints)}")

@@ -6,7 +6,7 @@
       "name": "Н1",
       "x": 116355.825,
       "y": 110420.51,
-      "z_surface": 27.63,
+      "z_surface": 27.49,
       "z_pipe_bottom": 28.74,
       "node_type": "support",
       "branch": "single"
@@ -15,7 +15,7 @@
       "name": "УК1",
       "x": 116379.417,
       "y": 110411.221,
-      "z_surface": 27.94,
+      "z_surface": 28.05,
       "z_pipe_bottom": 28.69,
       "node_type": "compensator",
       "branch": "single"
@@ -24,7 +24,7 @@
       "name": "Н2",
       "x": 116402.175,
       "y": 110402.259,
-      "z_surface": 28.01,
+      "z_surface": 27.66,
       "z_pipe_bottom": 28.64,
       "node_type": "support",
       "branch": "single"
@@ -33,7 +33,7 @@
       "name": "УТ1",
       "x": 116410.55,
       "y": 110398.962,
-      "z_surface": 27.91,
+      "z_surface": 27.66,
       "z_pipe_bottom": 28.62,
       "node_type": "street_unit",
       "branch": "single"
@@ -42,7 +42,7 @@
       "name": "УП2",
       "x": 116412.145,
       "y": 110395.294,
-      "z_surface": 28.06,
+      "z_surface": 27.92,
       "z_pipe_bottom": 26.38,
       "node_type": "support",
       "branch": "single"
@@ -51,7 +51,7 @@
       "name": "Н3",
       "x": 116432.801,
       "y": 110387.16,
-      "z_surface": 27.89,
+      "z_surface": 27.94,
       "z_pipe_bottom": 26.24,
       "node_type": "support",
       "branch": "single"
@@ -60,7 +60,7 @@
       "name": "УК2",
       "x": 116456.658,
       "y": 110377.766,
-      "z_surface": 27.72,
+      "z_surface": 27.7,
       "z_pipe_bottom": 26.09,
       "node_type": "compensator",
       "branch": "single"
@@ -69,7 +69,7 @@
       "name": "ТК-2",
       "x": 116546.859,
       "y": 110342.249,
-      "z_surface": 27.87,
+      "z_surface": 27.84,
       "z_pipe_bottom": 25.65,
       "node_type": "chamber",
       "branch": "single"
@@ -87,7 +87,7 @@
       "name": "УК6",
       "x": 116652.885,
       "y": 110307.339,
-      "z_surface": 27.79,
+      "z_surface": 27.8,
       "z_pipe_bottom": 25.85,
       "node_type": "compensator",
       "branch": "single"
@@ -96,7 +96,7 @@
       "name": "Н9",
       "x": 116683.256,
       "y": 110295.38,
-      "z_surface": 27.94,
+      "z_surface": 28.05,
       "z_pipe_bottom": 25.77,
       "node_type": "support",
       "branch": "single"
@@ -105,7 +105,7 @@
       "name": "ТК-3",
       "x": 116759.864,
       "y": 110258.1,
-      "z_surface": 28.3,
+      "z_surface": 28.29,
       "z_pipe_bottom": 26.09,
       "node_type": "chamber",
       "branch": "single"

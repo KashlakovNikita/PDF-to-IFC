@@ -14,7 +14,9 @@ import pytest
 from extract_from_dwg import (
     _clean_label,
     _normalise,
+    build_model,
     chain_segments,
+    nearest_ground_level,
     project_on_chain,
     snap_to_chains,
     waypoints_between,
@@ -161,3 +163,64 @@ def test_waypoints_between_is_empty_when_nodes_sit_on_different_chains():
     )
 
     assert waypoints == []
+
+
+# --- отметки земли с плана (задача 33) -------------------------------------
+#
+# Отметки ЛОТКА в чертеже найти не удалось (см. докстринг скрипта), а вот
+# съёмочные отметки земли на плане есть — их и берём.
+
+
+def test_nearest_ground_level_picks_the_closest_label():
+    levels = [((0.0, 0.0), 27.50), ((3.0, 0.0), 27.90), ((100.0, 0.0), 30.00)]
+
+    value, distance = nearest_ground_level((2.0, 0.0), levels, radius=5.0)
+
+    assert value == pytest.approx(27.90)
+    assert distance == pytest.approx(1.0)
+
+
+def test_nearest_ground_level_ignores_labels_beyond_the_radius():
+    """Дальше — это уже соседняя отметка, а не отметка этого узла."""
+    levels = [((0.0, 0.0), 27.50)]
+
+    assert nearest_ground_level((20.0, 0.0), levels, radius=5.0) is None
+
+
+def make_chain_and_labels():
+    chains = [[(0.0, 0.0), (100.0, 0.0)]]
+    labels = {"A": [(0.0, 0.0)], "B": [(100.0, 0.0)]}
+    order = ["A", "B"]
+    elevations = {"A": (27.00, 25.00, "chamber"), "B": (27.00, 24.50, "chamber")}
+    return chains, labels, order, elevations, {}
+
+
+def test_build_model_takes_ground_elevation_from_the_plan_when_it_is_near():
+    chains, labels, order, elevations, diameters = make_chain_and_labels()
+    ground = [((1.0, 0.0), 28.31)]
+
+    model, _, _ = build_model(chains, labels, order, elevations, diameters, ground)
+
+    assert model.nodes["A"].z_surface == pytest.approx(28.31)   # с плана
+    assert model.nodes["B"].z_surface == pytest.approx(27.00)   # подписи рядом нет
+
+
+def test_build_model_never_replaces_the_invert_elevation():
+    """Отметку лотка с плана взять неоткуда — она должна остаться из датасета."""
+    chains, labels, order, elevations, diameters = make_chain_and_labels()
+    ground = [((1.0, 0.0), 28.31), ((99.0, 0.0), 28.40)]
+
+    model, _, _ = build_model(chains, labels, order, elevations, diameters, ground)
+
+    assert model.nodes["A"].z_pipe_bottom == pytest.approx(25.00)
+    assert model.nodes["B"].z_pipe_bottom == pytest.approx(24.50)
+
+
+def test_build_model_reports_where_each_ground_elevation_came_from():
+    chains, labels, order, elevations, diameters = make_chain_and_labels()
+
+    _, _, placed = build_model(chains, labels, order, elevations, diameters, [((1.0, 0.0), 28.31)])
+
+    sources = {node["name"]: node["ground_source"] for node in placed}
+    assert sources["A"].startswith("план")
+    assert sources["B"] == "датасет"
