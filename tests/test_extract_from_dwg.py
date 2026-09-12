@@ -15,7 +15,9 @@ import ezdxf
 
 from extract_from_dwg import (
     _clean_label,
+    _turn_angle,
     build_parser,
+    load_route_segments,
     _mitre_normal,
     _normalise,
     build_model,
@@ -365,3 +367,78 @@ def test_offset_threads_side_assignment_is_symmetric():
 
     assert supply == pytest.approx(-ret)          # симметрично относительно оси
     assert abs(supply - ret) == pytest.approx(0.8)
+
+
+# --- сшивка через дубли и ложные развилки -----------------------------------
+#
+# Обе ловушки найдены при разборе участка Н7->УК6 (отклонение 2.46 м): петля
+# компенсатора там начерчена и линиями, и MLINE поверх них, а по краям стоят
+# поперечные торцы канала длиной 1.64 м. Из-за этого обход уходил в сторону и
+# рвал цепочку, участок терял 4 точки изгиба и шёл напрямик через петлю.
+
+
+def test_route_segments_drop_duplicates():
+    """Кусок трассы, начерченный дважды, не должен ломать сшивку."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (10, 0), dxfattribs={"layer": "ось"})
+    msp.add_line((10, 0), (0, 0), dxfattribs={"layer": "ось"})  # тот же, наоборот
+
+    assert len(load_route_segments(doc, "ось")) == 1
+
+
+def test_turn_angle_is_zero_when_going_straight():
+    assert _turn_angle((1.0, 0.0), (10.0, 0.0), (20.0, 0.0)) == pytest.approx(0.0)
+
+
+def test_turn_angle_is_ninety_degrees_on_a_perpendicular_branch():
+    assert _turn_angle((1.0, 0.0), (10.0, 0.0), (10.0, 5.0)) == pytest.approx(math.pi / 2)
+
+
+def test_chain_walks_straight_through_a_perpendicular_stub():
+    """Торец канала отходит под 90° — обход не должен в него сворачивать."""
+    segments = [
+        ((0.0, 0.0), (10.0, 0.0)),
+        ((10.0, 0.0), (20.0, 0.0)),
+        ((10.0, 0.0), (10.0, 1.64)),   # поперечный торец канала
+    ]
+
+    chains = chain_segments(segments, min_length=5.0)
+
+    longest = max(chains, key=lambda c: sum(math.dist(a, b) for a, b in zip(c, c[1:])))
+    assert [(round(x, 2), round(y, 2)) for x, y in longest] == [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+
+
+def test_chain_keeps_a_real_bend_that_is_not_a_stub():
+    """Настоящий поворот трассы (45°) не должен приниматься за ответвление."""
+    segments = [
+        ((0.0, 0.0), (10.0, 0.0)),
+        ((10.0, 0.0), (20.0, 10.0)),
+    ]
+
+    chains = chain_segments(segments, min_length=5.0)
+
+    assert len(chains) == 1
+    assert len(chains[0]) == 3
+
+
+def test_compensator_loop_survives_duplicate_and_stub_together():
+    """Тот самый случай Н7->УК6: петля, дубль поверх неё и торцы по краям."""
+    loop = [(0.0, 0.0), (6.0, -2.2), (14.2, 1.4), (19.8, -0.8), (31.0, -5.2)]
+    segments = [(a, b) for a, b in zip(loop, loop[1:])]
+    segments += [(b, a) for a, b in zip(loop, loop[1:])]        # дубль MLINE
+    segments += [((0.0, 0.0), (0.6, 1.5)), ((19.8, -0.8), (20.4, 0.7))]  # торцы канала
+
+    chains = chain_segments(segments, min_length=5.0)
+    longest = max(chains, key=lambda c: sum(math.dist(a, b) for a, b in zip(c, c[1:])))
+    rounded = [(round(x, 1), round(y, 1)) for x, y in longest]
+    expected = [(0.0, 0.0), (6.0, -2.2), (14.2, 1.4), (19.8, -0.8), (31.0, -5.2)]
+
+    # Цепочка может начаться с торца (обход стартует со свободного конца) —
+    # важно, что вся петля целиком идёт подряд и в правильном порядке, а не
+    # рвётся на куски, как было до дедупликации и выбора по минимальному
+    # повороту. Лишняя вершина торца на краю безобидна: узлы садятся на ось
+    # проекцией, и точкой изгиба она станет, только если попадёт между двумя
+    # узлами, чего на краю цепочки не бывает.
+    start = rounded.index(expected[0])
+    assert rounded[start:start + len(expected)] == expected

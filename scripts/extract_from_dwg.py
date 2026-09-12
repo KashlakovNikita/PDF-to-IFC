@@ -36,11 +36,25 @@
 
 Ось нарисована не одной полилинией, а девятью десятками отрезков (LINE) и
 мультилиниями (MLINE — так рисуют двухниточную трассу: хранится одна осевая,
-на экране две нитки). Отрезки сшиваются в цепочки по совпадающим концам, но в
-ОДНУ цепочку они не собираются: линия прерывается в камерах и на врезках, а
-местами нитки нарисованы раздельно. Через разрывы ничего не сшивается — точки
-изгиба берутся из той цепочки, на которой лежат ОБА соседних узла; если такой
-цепочки нет, участок остаётся прямым, и это видно в отчёте скрипта.
+на экране две нитки). Отрезки сшиваются в цепочки по совпадающим концам.
+
+Две ловушки, на которых сшивка сначала разваливалась (обе найдены при разборе
+участка Н7->УК6, где отклонение от эталона было 2.46 м):
+
+1. **Дубли.** Кусок трассы может быть начерчен ДВАЖДЫ — отдельными LINE и
+   поверх них MLINE с теми же вершинами. На стыке тогда сходятся четыре отрезка
+   вместо двух, обход уходит по дублю и цепочка обрывается. Поэтому одинаковые
+   отрезки (с точностью до направления и округления) отбрасываются.
+
+2. **Ложные развилки.** В точку стыка приходят не только продолжения трассы, но
+   и поперечные короткие отрезки — торцы канала длиной 1.64 м, то есть ровно его
+   ширина. Если на развилке брать первый попавшийся отрезок, обход сворачивает в
+   торец и останавливается. Поэтому на развилке выбирается продолжение с
+   НАИМЕНЬШИМ поворотом: трасса идёт почти прямо, а торец отходит под 90°.
+
+Через настоящие разрывы (камеры, врезки) по-прежнему не сшивается ничего:
+точки изгиба берутся из той цепочки, на которой лежат ОБА соседних узла; если
+такой цепочки нет, участок остаётся прямым, и это видно в отчёте скрипта.
 
 Разнос ниток: в плане его нет, в сечениях есть
 ------------------------------------------------
@@ -238,7 +252,31 @@ def load_route_segments(doc, layer: str) -> List[Tuple[Point, Point]]:
         else:
             continue
         segments.extend((a, b) for a, b in zip(points, points[1:]) if math.dist(a, b) > 1e-6)
-    return segments
+
+    # Дубли: тот же кусок трассы бывает начерчен и линиями, и мультилинией
+    # поверх них. Оставляем по одному экземпляру — иначе на стыке сходятся
+    # четыре отрезка вместо двух и обход цепочки уходит по дублю.
+    unique: List[Tuple[Point, Point]] = []
+    seen: set = set()
+    for first, second in segments:
+        key = tuple(sorted((
+            (round(first[0], 3), round(first[1], 3)),
+            (round(second[0], 3), round(second[1], 3)),
+        )))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((first, second))
+    return unique
+
+
+def _turn_angle(incoming: Tuple[float, float], corner: Point, following: Point) -> float:
+    """Угол поворота трассы в точке стыка, радианы (0 — идём прямо)."""
+    outgoing = (following[0] - corner[0], following[1] - corner[1])
+    first = math.hypot(*incoming) or 1.0
+    second = math.hypot(*outgoing) or 1.0
+    cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / (first * second)
+    return math.acos(max(-1.0, min(1.0, cosine)))
 
 
 def chain_segments(
@@ -263,16 +301,29 @@ def chain_segments(
 
     used: set = set()
 
+    def other_end(index: int, point: Point) -> Point:
+        first, second = segments[index]
+        return second if key(first) == key(point) else first
+
     def walk(start: Point) -> List[Point]:
         chain = [start]
         current = start
         while True:
-            following = next((i for i in adjacency.get(key(current), []) if i not in used), None)
-            if following is None:
+            candidates = [i for i in adjacency.get(key(current), []) if i not in used]
+            if not candidates:
                 return chain
+            if len(candidates) == 1 or len(chain) < 2:
+                following = candidates[0]
+            else:
+                # Развилка: идём туда, где трасса меньше всего поворачивает.
+                # Поперечные торцы канала отходят под прямым углом, и без этого
+                # выбора обход сворачивает в них и обрывает цепочку.
+                previous = chain[-2]
+                incoming = (current[0] - previous[0], current[1] - previous[1])
+                following = min(candidates, key=lambda i: _turn_angle(
+                    incoming, current, other_end(i, current)))
             used.add(following)
-            first, second = segments[following]
-            chain.append(second if key(first) == key(current) else first)
+            chain.append(other_end(following, current))
             current = chain[-1]
 
     chains: List[List[Point]] = []
