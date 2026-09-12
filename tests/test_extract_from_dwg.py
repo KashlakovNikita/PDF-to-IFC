@@ -15,6 +15,7 @@ import ezdxf
 
 from extract_from_dwg import (
     _clean_label,
+    build_parser,
     _mitre_normal,
     _normalise,
     build_model,
@@ -342,3 +343,25 @@ def test_offset_threads_falls_back_to_the_median_for_an_unknown_diameter():
     separated = offset_threads(model, {325: 0.7})   # про Ду 426 сечения молчат
 
     assert abs(separated.nodes["A@supply"].y - separated.nodes["A@return"].y) == pytest.approx(0.7)
+
+
+def test_thread_separation_is_on_by_default():
+    """Решение по вопросу 14: разнос включён по умолчанию, без флага."""
+    assert build_parser().parse_args([]).separate_threads is True
+
+
+def test_thread_separation_can_be_switched_off():
+    """Оставить обе нитки на общей оси — по-прежнему возможно, но это явный выбор."""
+    assert build_parser().parse_args(["--no-separate-threads"]).separate_threads is False
+
+
+def test_offset_threads_side_assignment_is_symmetric():
+    """Сторона условная: важно, что нитки по разные стороны и на паспортном
+    расстоянии, а какая именно слева — допущение, которое можно перевернуть."""
+    separated = offset_threads(make_two_branch_model(), {426: 0.8})
+
+    supply = separated.nodes["A@supply"].y
+    ret = separated.nodes["A@return"].y
+
+    assert supply == pytest.approx(-ret)          # симметрично относительно оси
+    assert abs(supply - ret) == pytest.approx(0.8)

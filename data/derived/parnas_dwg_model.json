@@ -1,123 +1,240 @@
 {
-  "project_name": "Парнас (координаты из DWG)",
+  "project_name": "Парнас (координаты из DWG) [нитки разведены]",
   "source": "XY — DWG л.2 «План ТС»; порядок — л.5-6 «Профили»; Z — data/samples/parnas_nodes.csv",
   "nodes": {
-    "Н1": {
+    "Н1@supply": {
       "name": "Н1",
-      "x": 116355.825,
-      "y": 110420.51,
+      "x": 116355.678,
+      "y": 110420.138,
       "z_surface": 27.49,
       "z_pipe_bottom": 28.74,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "УК1": {
+    "УК1@supply": {
       "name": "УК1",
-      "x": 116379.417,
-      "y": 110411.221,
+      "x": 116379.27,
+      "y": 110410.849,
       "z_surface": 28.05,
       "z_pipe_bottom": 28.69,
       "node_type": "compensator",
-      "branch": "single"
+      "branch": "supply"
     },
-    "Н2": {
+    "Н1@return": {
+      "name": "Н1",
+      "x": 116355.972,
+      "y": 110420.882,
+      "z_surface": 27.49,
+      "z_pipe_bottom": 28.74,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК1@return": {
+      "name": "УК1",
+      "x": 116379.564,
+      "y": 110411.593,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 28.69,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "Н2@supply": {
       "name": "Н2",
-      "x": 116402.175,
-      "y": 110402.259,
+      "x": 116402.028,
+      "y": 110401.887,
       "z_surface": 27.66,
       "z_pipe_bottom": 28.64,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "УТ1": {
+    "Н2@return": {
+      "name": "Н2",
+      "x": 116402.322,
+      "y": 110402.631,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.64,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УТ1@supply": {
       "name": "УТ1",
-      "x": 116410.55,
-      "y": 110398.962,
+      "x": 116410.403,
+      "y": 110398.59,
       "z_surface": 27.66,
       "z_pipe_bottom": 28.62,
       "node_type": "street_unit",
-      "branch": "single"
+      "branch": "supply"
     },
-    "УП2": {
+    "УТ1@return": {
+      "name": "УТ1",
+      "x": 116410.697,
+      "y": 110399.334,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.62,
+      "node_type": "street_unit",
+      "branch": "return"
+    },
+    "УП2@supply": {
       "name": "УП2",
-      "x": 116412.145,
-      "y": 110395.294,
+      "x": 116411.778,
+      "y": 110395.134,
       "z_surface": 27.92,
       "z_pipe_bottom": 26.38,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "Н3": {
+    "УП2@return": {
+      "name": "УП2",
+      "x": 116412.512,
+      "y": 110395.454,
+      "z_surface": 27.92,
+      "z_pipe_bottom": 26.38,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "Н3@supply": {
       "name": "Н3",
-      "x": 116432.801,
-      "y": 110387.16,
+      "x": 116432.654,
+      "y": 110386.788,
       "z_surface": 27.94,
       "z_pipe_bottom": 26.24,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "УК2": {
+    "Н3@return": {
+      "name": "Н3",
+      "x": 116432.948,
+      "y": 110387.532,
+      "z_surface": 27.94,
+      "z_pipe_bottom": 26.24,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК2@supply": {
       "name": "УК2",
-      "x": 116456.658,
-      "y": 110377.766,
+      "x": 116456.805,
+      "y": 110378.138,
       "z_surface": 27.7,
       "z_pipe_bottom": 26.09,
       "node_type": "compensator",
-      "branch": "single"
+      "branch": "supply"
     },
-    "ТК-2": {
+    "УК2@return": {
+      "name": "УК2",
+      "x": 116456.511,
+      "y": 110377.394,
+      "z_surface": 27.7,
+      "z_pipe_bottom": 26.09,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "ТК-2@supply": {
       "name": "ТК-2",
-      "x": 116546.859,
-      "y": 110342.249,
+      "x": 116546.712,
+      "y": 110341.877,
       "z_surface": 27.84,
       "z_pipe_bottom": 25.65,
       "node_type": "chamber",
-      "branch": "single"
+      "branch": "supply"
     },
-    "Н7": {
+    "ТК-2@return": {
+      "name": "ТК-2",
+      "x": 116547.006,
+      "y": 110342.621,
+      "z_surface": 27.84,
+      "z_pipe_bottom": 25.65,
+      "node_type": "chamber",
+      "branch": "return"
+    },
+    "Н7@supply": {
       "name": "Н7",
-      "x": 116620.85,
-      "y": 110313.114,
+      "x": 116620.703,
+      "y": 110312.742,
       "z_surface": 27.77,
       "z_pipe_bottom": 25.82,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "УК6": {
+    "Н7@return": {
+      "name": "Н7",
+      "x": 116620.997,
+      "y": 110313.486,
+      "z_surface": 27.77,
+      "z_pipe_bottom": 25.82,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК6@supply": {
       "name": "УК6",
-      "x": 116652.885,
-      "y": 110307.339,
+      "x": 116652.823,
+      "y": 110306.995,
       "z_surface": 27.8,
       "z_pipe_bottom": 25.85,
       "node_type": "compensator",
-      "branch": "single"
+      "branch": "supply"
     },
-    "Н9": {
+    "УК6@return": {
+      "name": "УК6",
+      "x": 116652.947,
+      "y": 110307.683,
+      "z_surface": 27.8,
+      "z_pipe_bottom": 25.85,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "Н9@supply": {
       "name": "Н9",
-      "x": 116683.256,
-      "y": 110295.38,
+      "x": 116683.128,
+      "y": 110295.054,
       "z_surface": 28.05,
       "z_pipe_bottom": 25.77,
       "node_type": "support",
-      "branch": "single"
+      "branch": "supply"
     },
-    "ТК-3": {
+    "Н9@return": {
+      "name": "Н9",
+      "x": 116683.384,
+      "y": 110295.706,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 25.77,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "ТК-3@supply": {
       "name": "ТК-3",
-      "x": 116759.864,
-      "y": 110258.1,
+      "x": 116759.73,
+      "y": 110257.777,
       "z_surface": 28.29,
       "z_pipe_bottom": 26.09,
       "node_type": "chamber",
-      "branch": "single"
+      "branch": "supply"
     },
-    "ТК-4": {
+    "ТК-3@return": {
+      "name": "ТК-3",
+      "x": 116759.998,
+      "y": 110258.423,
+      "z_surface": 28.29,
+      "z_pipe_bottom": 26.09,
+      "node_type": "chamber",
+      "branch": "return"
+    },
+    "ТК-4@supply": {
       "name": "ТК-4",
-      "x": 116889.356,
-      "y": 110204.489,
+      "x": 116889.222,
+      "y": 110204.166,
       "z_surface": 27.78,
       "z_pipe_bottom": 25.97,
       "node_type": "chamber",
-      "branch": "single"
+      "branch": "supply"
+    },
+    "ТК-4@return": {
+      "name": "ТК-4",
+      "x": 116889.49,
+      "y": 110204.812,
+      "z_surface": 27.78,
+      "z_pipe_bottom": 25.97,
+      "node_type": "chamber",
+      "branch": "return"
     }
   },
   "edges": [
@@ -283,8 +400,8 @@
       "slope": 0.0010137875101378655,
       "waypoints": [
         [
-          116513.566,
-          110355.359,
+          116513.419,
+          110354.987,
           26.152
         ]
       ],
@@ -304,8 +421,8 @@
       "slope": 0.0010137875101378655,
       "waypoints": [
         [
-          116513.566,
-          110355.359,
+          116513.713,
+          110355.731,
           26.152
         ]
       ],
@@ -415,13 +532,13 @@
       "slope": 0.002450980392156919,
       "waypoints": [
         [
-          116656.272,
-          110306.005,
+          116656.144,
+          110305.679,
           25.841
         ],
         [
-          116677.673,
-          110297.578,
+          116677.545,
+          110297.252,
           25.785
         ]
       ],
@@ -441,13 +558,13 @@
       "slope": 0.002450980392156919,
       "waypoints": [
         [
-          116656.272,
-          110306.005,
+          116656.4,
+          110306.331,
           25.841
         ],
         [
-          116677.673,
-          110297.578,
+          116677.801,
+          110297.904,
           25.785
         ]
       ],
@@ -467,28 +584,28 @@
       "slope": -0.0036693039789015055,
       "waypoints": [
         [
-          116688.838,
-          110293.181,
+          116688.71,
+          110292.855,
           25.792
         ],
         [
-          116694.421,
-          110290.983,
+          116694.158,
+          110290.71,
           25.814
         ],
         [
-          116697.492,
-          110283.922,
+          116697.227,
+          110283.653,
           25.842
         ],
         [
-          116709.503,
-          110278.949,
+          116709.369,
+          110278.626,
           25.89
         ],
         [
-          116756.995,
-          110259.287,
+          116756.861,
+          110258.964,
           26.079
         ]
       ],
@@ -508,28 +625,28 @@
       "slope": -0.0036693039789015055,
       "waypoints": [
         [
-          116688.838,
-          110293.181,
+          116688.966,
+          110293.507,
           25.792
         ],
         [
-          116694.421,
-          110290.983,
+          116694.684,
+          110291.256,
           25.814
         ],
         [
-          116697.492,
-          110283.922,
+          116697.757,
+          110284.191,
           25.842
         ],
         [
-          116709.503,
-          110278.949,
+          116709.637,
+          110279.272,
           25.89
         ],
         [
-          116756.995,
-          110259.287,
+          116757.129,
+          110259.61,
           26.079
         ]
       ],

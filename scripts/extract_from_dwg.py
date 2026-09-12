@@ -64,12 +64,17 @@
 число, и совпадение с эталоном (медиана 0.70 м, диапазон 0.40..0.81) —
 независимое подтверждение, а не источник.
 
+Разнос включён ПО УМОЛЧАНИЮ (решение по вопросу 14). Отключается флагом
+--no-separate-threads, если нужно посмотреть на голую осевую.
+
 Чего в данных всё-таки нет: КАКАЯ нитка идёт слева, а какая справа. В сечении
 порядок есть, но чтобы перенести его на план, нужно знать направление взгляда
-разреза — это отдельная работа. Поэтому --separate-threads по умолчанию выключен:
-с ним геометрия сети становится верной (нитки расходятся на паспортное
-расстояние), но соответствие «supply — это именно Т1» остаётся непроверенным.
-Включать или нет — решение человека, и оно зафиксировано в отчёте.
+разреза — это отдельная работа. Поэтому СТОРОНА НАЗНАЧЕНА УСЛОВНО: supply
+кладётся влево по ходу трассы, return вправо. Чертёж этого не задаёт, и это
+допущение, а не факт. Если появится источник (лист «Схема» или другой), сторону
+придётся поправить — но геометрия сети от этого не изменится: нитки в любом
+случае стоят на паспортном расстоянии друг от друга, поменяться местами могут
+только подписи Т1/Т2.
 
 Система координат
 ------------------
@@ -515,16 +520,21 @@ def offset_threads(model: ThermalNetworkModel, spacing: Dict[int, float]) -> The
     — по медиане известных; узлы, у которых обе величины неизвестны, остаются на
     оси.
 
-    Сторона выбрана произвольно (supply влево по ходу, return вправо): в данных
-    чертежа этого нет, и здесь это ЯВНОЕ допущение, а не измерение. Геометрия
-    сети от выбора не зависит — нитки встают на паспортное расстояние в любом
-    случае, — а вот подпись «эта нитка и есть подача» остаётся непроверенной,
-    пока направление взгляда разрезов не разобрано.
+    ВНИМАНИЕ, НЕПРОВЕРЕННОЕ ДОПУЩЕНИЕ: сторона назначена условно — supply влево
+    по ходу трассы, return вправо. Чертёж стороны не задаёт: в плане одна
+    осевая, а порядок ниток в сечении без направления взгляда разреза на план
+    не переносится. Если появится источник (лист «Схема» или другой), это
+    потребует правки. Геометрия сети при этом не изменится — нитки в любом
+    случае стоят на паспортном расстоянии друг от друга, — поменяться местами
+    могут только подписи Т1/Т2.
     """
     if not spacing:
         return model
 
     default = sorted(spacing.values())[len(spacing) // 2]
+    # Знак стороны — то самое условное допущение (см. докстринг функции):
+    # −1 это «влево по ходу трассы», +1 «вправо». Поменять местами безопасно,
+    # геометрия сети не изменится.
     sides = {"supply": -1.0, "return": 1.0}
     separated = ThermalNetworkModel(
         project_name=f"{model.project_name} [нитки разведены]", source=model.source
@@ -719,10 +729,13 @@ def write_csv(model: ThermalNetworkModel, out_dir: Path) -> Tuple[Path, Path]:
 
     with open(nodes_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["name", "node_type", "x", "y", "z_surface", "z_pipe_bottom", "source"])
+        # branch обязателен: после разноса ниток в выгрузке два узла с одним
+        # именем и разными координатами, и без этой колонки их не различить.
+        writer.writerow(["name", "branch", "node_type", "x", "y",
+                         "z_surface", "z_pipe_bottom", "source"])
         for node in model.nodes.values():
             writer.writerow([
-                node.name, node.node_type, f"{node.x:.3f}", f"{node.y:.3f}",
+                node.name, node.branch, node.node_type, f"{node.x:.3f}", f"{node.y:.3f}",
                 f"{node.z_surface:.2f}", f"{node.z_pipe_bottom:.2f}",
                 "XY — DWG л.2 (остриё выноски); Z — профиль л.5 через data/samples",
             ])
@@ -742,7 +755,8 @@ def write_csv(model: ThermalNetworkModel, out_dir: Path) -> Tuple[Path, Path]:
     return nodes_path, edges_path
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Разбор аргументов отдельно от работы — чтобы умолчания можно было проверить тестом."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plan", type=Path, default=DEFAULT_PLAN, help="DXF листа плана")
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE,
@@ -755,11 +769,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              f"(по умолчанию {GROUND_RADIUS_M}; 0 — не брать с плана)")
     parser.add_argument("--sections", type=Path, default=DEFAULT_SECTIONS,
                         help="DXF листа сечений (оттуда берётся расстояние между нитками)")
-    parser.add_argument("--separate-threads", action="store_true",
-                        help="развести supply/return на расстояние из сечений; сторона "
-                             "(какая нитка слева) в чертеже не задана — см. докстринг")
+    parser.add_argument("--separate-threads", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="развести supply/return на расстояние из сечений (по умолчанию да; "
+                             "--no-separate-threads оставит обе нитки на общей оси). Сторона "
+                             "назначена условно, чертёж её не задаёт — см. докстринг")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="куда класть выгрузку")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
 
     for path in (args.plan, args.profile):
         if not path.exists():
@@ -819,8 +839,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if spacing:
         print("Расстояние между нитками по сечениям: "
               + ", ".join(f"Ду {d} — {s:.2f} м" for d, s in sorted(spacing.items()))
-              + (" (применено)" if args.separate_threads
-                 else " (НЕ применено, нужен флаг --separate-threads)"))
+              + (" (применено; сторона условная, см. докстринг)" if args.separate_threads
+                 else " (НЕ применено: --no-separate-threads)"))
     else:
         print("Расстояние между нитками: в сечениях не найдено")
     print(f"Длина сети: {sum(e.length for e in model.edges):.2f} м "
