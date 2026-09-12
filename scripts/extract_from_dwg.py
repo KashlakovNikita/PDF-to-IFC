@@ -42,6 +42,35 @@
 изгиба берутся из той цепочки, на которой лежат ОБА соседних узла; если такой
 цепочки нет, участок остаётся прямым, и это видно в отчёте скрипта.
 
+Разнос ниток: в плане его нет, в сечениях есть
+------------------------------------------------
+Отдельный вопрос — различает ли чертёж подачу и обратку. Измерено, а не
+предположено:
+
+- на проектном слое `_ПР_Теплосеть` все 31 отрезков, идущих параллельно трассе,
+  лежат на НУЛЕВОМ отступе от неё: это одна осевая линия, двух контуров нет;
+- эталонные нитки Т1 и Т2 стоят симметрично относительно этой же оси, по 0.35 м
+  в каждую сторону (Т1 преимущественно слева, Т2 справа) — то есть проектная
+  ось проходит ровно между ними;
+- на топооснове `32_Теплосеть` параллельные отрезки размазаны от −1.5 до +1.5 м
+  без двух чётких пиков, и это существующая сеть до реконструкции, а не наша;
+- MLINE на слое теплосети рисует две линии с расстоянием 1.28/1.64/1.74 м — это
+  СТЕНКИ КАНАЛА (совпадает с шириной «Канала» в эталоне), а не нитки.
+
+Зато на листе сечений нитки подписаны раздельно: «Т1 Ø426х9,0» и «Т2 Ø426х9,0»,
+каждая со своей окружностью. Лист начерчен в миллиметрах (радиусы 162.5 и 213.0
+при Ду 325 и Ду 426), и расстояние между центрами ниток читается прямо оттуда:
+**700 мм при Ду 325 и 800 мм при Ду 426**. Это данные чертежа, а не подобранное
+число, и совпадение с эталоном (медиана 0.70 м, диапазон 0.40..0.81) —
+независимое подтверждение, а не источник.
+
+Чего в данных всё-таки нет: КАКАЯ нитка идёт слева, а какая справа. В сечении
+порядок есть, но чтобы перенести его на план, нужно знать направление взгляда
+разреза — это отдельная работа. Поэтому --separate-threads по умолчанию выключен:
+с ним геометрия сети становится верной (нитки расходятся на паспортное
+расстояние), но соответствие «supply — это именно Т1» остаётся непроверенным.
+Включать или нет — решение человека, и оно зафиксировано в отчёте.
+
 Система координат
 ------------------
 Плановые координаты DWG лежат в диапазоне X 115751..117130, Y 108074..110563 —
@@ -122,8 +151,11 @@ import ezdxf  # noqa: E402
 
 from pdf_to_ifc.model import NetworkEdge, NetworkNode, ThermalNetworkModel  # noqa: E402
 
+from dataclasses import replace  # noqa: E402
+
 DEFAULT_PLAN = REPO_ROOT / "out" / "dxf" / "04_2_115-23-ТС_л.2_План ТС.dxf"
 DEFAULT_PROFILE = REPO_ROOT / "out" / "dxf" / "06_2_115-23-ТС_л.5-6_Профили_изм.dxf"
+DEFAULT_SECTIONS = REPO_ROOT / "out" / "dxf" / "05_2_115-23-ТС_л.4_Сечения.dxf"
 DEFAULT_ELEVATIONS = REPO_ROOT / "data" / "samples" / "parnas_nodes.csv"
 DEFAULT_OUT_DIR = REPO_ROOT / "data" / "derived"
 
@@ -136,6 +168,11 @@ GROUND_LEVEL_LAYER = "61_Отметки высоты поверхности"
 # примерно половина шага съёмочных точек вдоль трассы: дальше уже соседняя
 # отметка, и брать её значит подменить измерение соседним измерением.
 GROUND_RADIUS_M = 5.0
+# Лист сечений: подписи ниток и окружности труб. Лист начерчен в миллиметрах.
+SECTION_THREAD_RE = re.compile(r"^(Т1|Т2)\s*[Ø∅%%C]*\s*(\d{2,4})", re.IGNORECASE)
+SECTION_UNITS_PER_M = 1000.0
+# Подписи двух ниток одного сечения стоят рядом; дальше — уже другое сечение.
+SECTION_PAIR_RADIUS = 3000.0
 # Отметки на плане пишут двумя-тремя знаками: 27.74, 28,30. Диапазон ограничен,
 # чтобы не поймать длины, диаметры и номера.
 LEVEL_TEXT_RE = re.compile(r"^\s*(\d{2}[.,]\d{1,2})\s*$")
@@ -394,6 +431,150 @@ def nearest_ground_level(
     return best
 
 
+def load_thread_spacing(doc) -> Dict[int, float]:
+    """Расстояние между осями ниток по листу сечений: {диаметр, мм: расстояние, м}.
+
+    На сечении каждая нитка подписана отдельно («Т1 Ø426х9,0», «Т2 Ø426х9,0») и
+    нарисована окружностью. Берутся пары подписей Т1/Т2 одного сечения, к каждой
+    подбирается ближайшая окружность, и меряется расстояние между центрами.
+    Лист начерчен в миллиметрах — это видно по радиусам (162.5 при Ду 325,
+    213.0 при Ду 426), поэтому результат делится на 1000.
+
+    По каждому диаметру берётся медиана: сечений несколько, и одно из них может
+    быть нетиповым (например, в футляре или на повороте).
+    """
+    labels: List[Tuple[str, int, Point]] = []
+    for entity in doc.modelspace():
+        if entity.dxftype() not in ("TEXT", "MTEXT"):
+            continue
+        raw = entity.plain_text() if entity.dxftype() == "MTEXT" else entity.dxf.text
+        match = SECTION_THREAD_RE.match((raw or "").strip().replace("\n", " "))
+        if not match:
+            continue
+        position = entity.dxf.insert
+        labels.append((match.group(1).upper(), int(match.group(2)),
+                       (float(position[0]), float(position[1]))))
+
+    circles = [
+        ((float(c.dxf.center[0]), float(c.dxf.center[1])), float(c.dxf.radius))
+        for c in doc.modelspace() if c.dxftype() == "CIRCLE"
+    ]
+    if not circles or not labels:
+        return {}
+
+    measured: Dict[int, List[float]] = {}
+    labels.sort(key=lambda item: (round(item[2][1], -1), item[2][0]))
+    for first, second in zip(labels, labels[1:]):
+        if first[0] == second[0] or first[1] != second[1]:
+            continue
+        if math.dist(first[2], second[2]) > SECTION_PAIR_RADIUS:
+            continue
+        centre_a = min(circles, key=lambda c: math.dist(c[0], first[2]))[0]
+        centre_b = min(circles, key=lambda c: math.dist(c[0], second[2]))[0]
+        spacing = math.dist(centre_a, centre_b) / SECTION_UNITS_PER_M
+        if 0.2 <= spacing <= 3.0:
+            measured.setdefault(first[1], []).append(spacing)
+
+    return {
+        diameter: round(sorted(values)[len(values) // 2], 3)
+        for diameter, values in measured.items()
+    }
+
+
+def _unit_normal(first: Point, second: Point) -> Tuple[float, float]:
+    """Единичная нормаль слева от направления first -> second."""
+    dx, dy = second[0] - first[0], second[1] - first[1]
+    length = math.hypot(dx, dy) or 1.0
+    return (-dy / length, dx / length)
+
+
+def _mitre_normal(before: Point, corner: Point, after: Point) -> Tuple[float, float]:
+    """Направление сдвига в точке поворота — «ус» (mitre), а не простая нормаль.
+
+    Если сдвигать вершину поворота по нормали одного из звеньев или по их
+    усреднённому направлению, параллельная нитка срежет угол: она пройдёт ближе
+    к вершине, чем нужно, и на повороте сойдётся с осью. Правильная точка —
+    пересечение двух сдвинутых звеньев, а это сдвиг по биссектрисе на
+    shift / cos(половина угла поворота). В векторном виде это
+    (n1 + n2) / (1 + n1·n2), что и возвращается.
+    """
+    first = _unit_normal(before, corner)
+    second = _unit_normal(corner, after)
+    denominator = 1.0 + first[0] * second[0] + first[1] * second[1]
+    if denominator < 1e-6:   # разворот на 180°, «уса» не существует
+        return first
+    return ((first[0] + second[0]) / denominator, (first[1] + second[1]) / denominator)
+
+
+def offset_threads(model: ThermalNetworkModel, spacing: Dict[int, float]) -> ThermalNetworkModel:
+    """Развести supply и return на паспортное расстояние по обе стороны от оси.
+
+    Возвращается НОВАЯ модель с узлами-двойниками по ниткам (см. задачу 26):
+    каждая нитка сдвигается перпендикулярно трассе на половину расстояния из
+    сечений. Расстояние берётся по диаметру участка, а если для него сечения нет
+    — по медиане известных; узлы, у которых обе величины неизвестны, остаются на
+    оси.
+
+    Сторона выбрана произвольно (supply влево по ходу, return вправо): в данных
+    чертежа этого нет, и здесь это ЯВНОЕ допущение, а не измерение. Геометрия
+    сети от выбора не зависит — нитки встают на паспортное расстояние в любом
+    случае, — а вот подпись «эта нитка и есть подача» остаётся непроверенной,
+    пока направление взгляда разрезов не разобрано.
+    """
+    if not spacing:
+        return model
+
+    default = sorted(spacing.values())[len(spacing) // 2]
+    sides = {"supply": -1.0, "return": 1.0}
+    separated = ThermalNetworkModel(
+        project_name=f"{model.project_name} [нитки разведены]", source=model.source
+    )
+
+    directions: Dict[str, Tuple[float, float]] = {}
+    diameters: Dict[str, int] = {}
+    for edge in model.edges:
+        points = edge.polyline(model.nodes)
+        start, end = edge.resolve_nodes(model.nodes)
+        for node, (first, second) in ((start, (points[0], points[1])),
+                                      (end, (points[-2], points[-1]))):
+            directions.setdefault(node.name, (second[0] - first[0], second[1] - first[1]))
+            diameters.setdefault(node.name, edge.diameter)
+
+    for edge in model.edges:
+        for node in edge.resolve_nodes(model.nodes):
+            twin_key = f"{node.name}@{edge.branch}"
+            if twin_key in separated.nodes:
+                continue
+            dx, dy = directions.get(node.name, (1.0, 0.0))
+            normal = _unit_normal((0.0, 0.0), (dx, dy))
+            half = spacing.get(diameters.get(node.name, 0), default) / 2.0
+            shift = sides.get(edge.branch, 0.0) * half
+            separated.add_node(NetworkNode(
+                name=node.name,
+                x=round(node.x + normal[0] * shift, 3),
+                y=round(node.y + normal[1] * shift, 3),
+                z_surface=node.z_surface, z_pipe_bottom=node.z_pipe_bottom,
+                node_type=node.node_type, branch=edge.branch,
+            ))
+
+    for edge in model.edges:
+        half = spacing.get(edge.diameter, default) / 2.0
+        shift = sides.get(edge.branch, 0.0) * half
+        # Точку изгиба сдвигаем перпендикулярно ЕЁ ЗВЕНУ ломаной, а не участку
+        # целиком: на повороте направление трассы меняется, и общий для участка
+        # перпендикуляр увёл бы нитку внутрь или наружу угла.
+        points = edge.polyline(model.nodes)
+        waypoints = []
+        for index, (x, y, z) in enumerate(edge.waypoints, start=1):
+            before, after = points[index - 1], points[index + 1]
+            normal = _mitre_normal((before[0], before[1]), (x, y), (after[0], after[1]))
+            waypoints.append((round(x + normal[0] * shift, 3),
+                              round(y + normal[1] * shift, 3), z))
+        separated.edges.append(replace(edge, waypoints=waypoints))
+
+    return separated
+
+
 def load_elevations(path: Path) -> Dict[str, Tuple[float, float, str]]:
     """Отметки узлов из датасета: ключ -> (z_surface, z_pipe_bottom, node_type)."""
     elevations: Dict[str, Tuple[float, float, str]] = {}
@@ -572,6 +753,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--ground-radius", type=float, default=GROUND_RADIUS_M,
                         help="радиус поиска отметки земли на плане, м "
                              f"(по умолчанию {GROUND_RADIUS_M}; 0 — не брать с плана)")
+    parser.add_argument("--sections", type=Path, default=DEFAULT_SECTIONS,
+                        help="DXF листа сечений (оттуда берётся расстояние между нитками)")
+    parser.add_argument("--separate-threads", action="store_true",
+                        help="развести supply/return на расстояние из сечений; сторона "
+                             "(какая нитка слева) в чертеже не задана — см. докстринг")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="куда класть выгрузку")
     args = parser.parse_args(argv)
 
@@ -602,6 +788,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Ни один узел не удалось поставить на ось", file=sys.stderr)
         return 2
 
+    spacing: Dict[int, float] = {}
+    if args.sections.exists():
+        spacing = load_thread_spacing(ezdxf.readfile(str(args.sections)))
+    if args.separate_threads:
+        model = offset_threads(model, spacing)
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     nodes_path, edges_path = write_csv(model, args.out_dir)
     model_path = args.out_dir / "parnas_dwg_model.json"
@@ -624,6 +816,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Участков: {len(supply)} (x2 нитки = {len(model.edges)}), "
           f"точек изгиба: {sum(len(e.waypoints) for e in supply)}, "
           f"без изгибов: {sum(1 for e in supply if not e.waypoints)}")
+    if spacing:
+        print("Расстояние между нитками по сечениям: "
+              + ", ".join(f"Ду {d} — {s:.2f} м" for d, s in sorted(spacing.items()))
+              + (" (применено)" if args.separate_threads
+                 else " (НЕ применено, нужен флаг --separate-threads)"))
+    else:
+        print("Расстояние между нитками: в сечениях не найдено")
     print(f"Длина сети: {sum(e.length for e in model.edges):.2f} м "
           f"(по одной нитке {sum(e.length for e in supply):.2f} м)")
     if skipped:

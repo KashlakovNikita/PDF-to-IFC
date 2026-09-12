@@ -1,0 +1,688 @@
+{
+  "project_name": "Парнас (координаты из DWG) [нитки разведены]",
+  "source": "XY — DWG л.2 «План ТС»; порядок — л.5-6 «Профили»; Z — data/samples/parnas_nodes.csv",
+  "nodes": {
+    "Н1@supply": {
+      "name": "Н1",
+      "x": 116355.678,
+      "y": 110420.138,
+      "z_surface": 27.49,
+      "z_pipe_bottom": 28.74,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "УК1@supply": {
+      "name": "УК1",
+      "x": 116379.27,
+      "y": 110410.849,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 28.69,
+      "node_type": "compensator",
+      "branch": "supply"
+    },
+    "Н1@return": {
+      "name": "Н1",
+      "x": 116355.972,
+      "y": 110420.882,
+      "z_surface": 27.49,
+      "z_pipe_bottom": 28.74,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК1@return": {
+      "name": "УК1",
+      "x": 116379.564,
+      "y": 110411.593,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 28.69,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "Н2@supply": {
+      "name": "Н2",
+      "x": 116402.028,
+      "y": 110401.887,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.64,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "Н2@return": {
+      "name": "Н2",
+      "x": 116402.322,
+      "y": 110402.631,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.64,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УТ1@supply": {
+      "name": "УТ1",
+      "x": 116410.403,
+      "y": 110398.59,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.62,
+      "node_type": "street_unit",
+      "branch": "supply"
+    },
+    "УТ1@return": {
+      "name": "УТ1",
+      "x": 116410.697,
+      "y": 110399.334,
+      "z_surface": 27.66,
+      "z_pipe_bottom": 28.62,
+      "node_type": "street_unit",
+      "branch": "return"
+    },
+    "УП2@supply": {
+      "name": "УП2",
+      "x": 116411.778,
+      "y": 110395.134,
+      "z_surface": 27.92,
+      "z_pipe_bottom": 26.38,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "УП2@return": {
+      "name": "УП2",
+      "x": 116412.512,
+      "y": 110395.454,
+      "z_surface": 27.92,
+      "z_pipe_bottom": 26.38,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "Н3@supply": {
+      "name": "Н3",
+      "x": 116432.654,
+      "y": 110386.788,
+      "z_surface": 27.94,
+      "z_pipe_bottom": 26.24,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "Н3@return": {
+      "name": "Н3",
+      "x": 116432.948,
+      "y": 110387.532,
+      "z_surface": 27.94,
+      "z_pipe_bottom": 26.24,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК2@supply": {
+      "name": "УК2",
+      "x": 116456.805,
+      "y": 110378.138,
+      "z_surface": 27.7,
+      "z_pipe_bottom": 26.09,
+      "node_type": "compensator",
+      "branch": "supply"
+    },
+    "УК2@return": {
+      "name": "УК2",
+      "x": 116456.511,
+      "y": 110377.394,
+      "z_surface": 27.7,
+      "z_pipe_bottom": 26.09,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "ТК-2@supply": {
+      "name": "ТК-2",
+      "x": 116546.712,
+      "y": 110341.877,
+      "z_surface": 27.84,
+      "z_pipe_bottom": 25.65,
+      "node_type": "chamber",
+      "branch": "supply"
+    },
+    "ТК-2@return": {
+      "name": "ТК-2",
+      "x": 116547.006,
+      "y": 110342.621,
+      "z_surface": 27.84,
+      "z_pipe_bottom": 25.65,
+      "node_type": "chamber",
+      "branch": "return"
+    },
+    "Н7@supply": {
+      "name": "Н7",
+      "x": 116620.703,
+      "y": 110312.742,
+      "z_surface": 27.77,
+      "z_pipe_bottom": 25.82,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "Н7@return": {
+      "name": "Н7",
+      "x": 116620.997,
+      "y": 110313.486,
+      "z_surface": 27.77,
+      "z_pipe_bottom": 25.82,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "УК6@supply": {
+      "name": "УК6",
+      "x": 116652.823,
+      "y": 110306.995,
+      "z_surface": 27.8,
+      "z_pipe_bottom": 25.85,
+      "node_type": "compensator",
+      "branch": "supply"
+    },
+    "УК6@return": {
+      "name": "УК6",
+      "x": 116652.947,
+      "y": 110307.683,
+      "z_surface": 27.8,
+      "z_pipe_bottom": 25.85,
+      "node_type": "compensator",
+      "branch": "return"
+    },
+    "Н9@supply": {
+      "name": "Н9",
+      "x": 116683.128,
+      "y": 110295.054,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 25.77,
+      "node_type": "support",
+      "branch": "supply"
+    },
+    "Н9@return": {
+      "name": "Н9",
+      "x": 116683.384,
+      "y": 110295.706,
+      "z_surface": 28.05,
+      "z_pipe_bottom": 25.77,
+      "node_type": "support",
+      "branch": "return"
+    },
+    "ТК-3@supply": {
+      "name": "ТК-3",
+      "x": 116759.73,
+      "y": 110257.777,
+      "z_surface": 28.29,
+      "z_pipe_bottom": 26.09,
+      "node_type": "chamber",
+      "branch": "supply"
+    },
+    "ТК-3@return": {
+      "name": "ТК-3",
+      "x": 116759.998,
+      "y": 110258.423,
+      "z_surface": 28.29,
+      "z_pipe_bottom": 26.09,
+      "node_type": "chamber",
+      "branch": "return"
+    },
+    "ТК-4@supply": {
+      "name": "ТК-4",
+      "x": 116889.222,
+      "y": 110204.166,
+      "z_surface": 27.78,
+      "z_pipe_bottom": 25.97,
+      "node_type": "chamber",
+      "branch": "supply"
+    },
+    "ТК-4@return": {
+      "name": "ТК-4",
+      "x": 116889.49,
+      "y": 110204.812,
+      "z_surface": 27.78,
+      "z_pipe_bottom": 25.97,
+      "node_type": "chamber",
+      "branch": "return"
+    }
+  },
+  "edges": [
+    {
+      "start_node": "Н1",
+      "end_node": "УК1",
+      "diameter": 426,
+      "length": 25.36,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.001971608832807459,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н1",
+      "end_node": "УК1",
+      "diameter": 426,
+      "length": 25.36,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.001971608832807459,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК1",
+      "end_node": "Н2",
+      "diameter": 426,
+      "length": 24.46,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0020441537203598,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК1",
+      "end_node": "Н2",
+      "diameter": 426,
+      "length": 24.46,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0020441537203598,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н2",
+      "end_node": "УТ1",
+      "diameter": 426,
+      "length": 9.0,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.002222222222222175,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н2",
+      "end_node": "УТ1",
+      "diameter": 426,
+      "length": 9.0,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.002222222222222175,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УТ1",
+      "end_node": "УП2",
+      "diameter": 426,
+      "length": 4.0,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.5600000000000005,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УТ1",
+      "end_node": "УП2",
+      "diameter": 426,
+      "length": 4.0,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.5600000000000005,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УП2",
+      "end_node": "Н3",
+      "diameter": 426,
+      "length": 22.2,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.006306306306306332,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УП2",
+      "end_node": "Н3",
+      "diameter": 426,
+      "length": 22.2,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.006306306306306332,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н3",
+      "end_node": "УК2",
+      "diameter": 426,
+      "length": 147.96,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0010137875101378655,
+      "waypoints": [
+        [
+          116513.419,
+          110354.987,
+          26.152
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н3",
+      "end_node": "УК2",
+      "diameter": 426,
+      "length": 147.96,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0010137875101378655,
+      "waypoints": [
+        [
+          116513.713,
+          110355.731,
+          26.152
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК2",
+      "end_node": "ТК-2",
+      "diameter": 426,
+      "length": 96.94,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0045388900350732545,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК2",
+      "end_node": "ТК-2",
+      "diameter": 426,
+      "length": 96.94,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0045388900350732545,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "ТК-2",
+      "end_node": "Н7",
+      "diameter": 426,
+      "length": 79.52,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": -0.002137826961770645,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "ТК-2",
+      "end_node": "Н7",
+      "diameter": 426,
+      "length": 79.52,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": -0.002137826961770645,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н7",
+      "end_node": "УК6",
+      "diameter": 325,
+      "length": 32.55,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": -0.0009216589861751502,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н7",
+      "end_node": "УК6",
+      "diameter": 325,
+      "length": 32.55,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": -0.0009216589861751502,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК6",
+      "end_node": "Н9",
+      "diameter": 325,
+      "length": 32.64,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.002450980392156919,
+      "waypoints": [
+        [
+          116656.144,
+          110305.679,
+          25.841
+        ],
+        [
+          116677.545,
+          110297.252,
+          25.785
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "УК6",
+      "end_node": "Н9",
+      "diameter": 325,
+      "length": 32.64,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.002450980392156919,
+      "waypoints": [
+        [
+          116656.4,
+          110306.331,
+          25.841
+        ],
+        [
+          116677.801,
+          110297.904,
+          25.785
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н9",
+      "end_node": "ТК-3",
+      "diameter": 325,
+      "length": 87.21,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": -0.0036693039789015055,
+      "waypoints": [
+        [
+          116688.71,
+          110292.855,
+          25.792
+        ],
+        [
+          116694.158,
+          110290.71,
+          25.814
+        ],
+        [
+          116697.227,
+          110283.653,
+          25.842
+        ],
+        [
+          116709.369,
+          110278.626,
+          25.89
+        ],
+        [
+          116756.861,
+          110258.964,
+          26.079
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "Н9",
+      "end_node": "ТК-3",
+      "diameter": 325,
+      "length": 87.21,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": -0.0036693039789015055,
+      "waypoints": [
+        [
+          116688.966,
+          110293.507,
+          25.792
+        ],
+        [
+          116694.684,
+          110291.256,
+          25.814
+        ],
+        [
+          116697.757,
+          110284.191,
+          25.842
+        ],
+        [
+          116709.637,
+          110279.272,
+          25.89
+        ],
+        [
+          116757.129,
+          110259.61,
+          26.079
+        ]
+      ],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "ТК-3",
+      "end_node": "ТК-4",
+      "diameter": 325,
+      "length": 140.15,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "supply",
+      "slope": 0.0008562254727078201,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    },
+    {
+      "start_node": "ТК-3",
+      "end_node": "ТК-4",
+      "diameter": 325,
+      "length": 140.15,
+      "material": "Steel",
+      "insulation": "PPU+PE",
+      "laying_type": "underground_ducted",
+      "branch": "return",
+      "slope": 0.0008562254727078201,
+      "waypoints": [],
+      "pressure_mpa": null,
+      "temperature_c": null,
+      "gost_designation": null
+    }
+  ]
+}

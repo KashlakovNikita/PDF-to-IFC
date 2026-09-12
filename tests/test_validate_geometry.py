@@ -24,6 +24,7 @@ from validate_geometry import (
     DEFAULT_REFERENCE,
     Centerline,
     _distances_to_network,
+    _format_point_distribution,
     _length_by_dn,
     _reference_dn,
     compare,
@@ -327,3 +328,35 @@ def test_reference_dn426_length_includes_pipes_without_the_diameter_property():
 
     assert totals[426] == pytest.approx(469.49, abs=0.05)
     assert totals[325] == pytest.approx(795.02, abs=0.05)
+
+
+# --- распределение по всем точкам (задача 26) -------------------------------
+#
+# Основная метрика берёт максимум по участку — так и надо для приёмки. Но из-за
+# этого не видно поведения сети в целом: разнос ниток сдвинул типичное
+# отклонение с 0.350 до 0.002 м, а медиана максимумов по участкам почти не
+# изменилась. Обе цифры нужны.
+
+
+def test_point_distribution_reports_everything_inside_for_identical_networks():
+    network = [line((0.0, 0.0, 0.0), (50.0, 0.0, 0.0))]
+
+    lines = _format_point_distribution(network, network, samples=20, tolerance=0.2)
+
+    assert "доля точек в пределах 0.2 м: 100.0%" in lines[-1]
+    assert "медиана 0.000 м" in lines[1]
+
+
+def test_point_distribution_shows_a_shift_that_per_section_maxima_would_hide():
+    """Сеть целиком сдвинута на 0.35 м — в допуск не попадает ни одна точка."""
+    original = [line((0.0, 0.0, 0.0), (50.0, 0.0, 0.0))]
+    shifted = [line((0.0, 0.35, 0.0), (50.0, 0.35, 0.0))]
+
+    lines = _format_point_distribution(shifted, original, samples=20, tolerance=0.2)
+
+    assert "медиана 0.350 м" in lines[1]
+    assert "доля точек в пределах 0.2 м: 0.0%" in lines[-1]
+
+
+def test_point_distribution_is_empty_without_data():
+    assert _format_point_distribution([], [], samples=20, tolerance=0.2) == []

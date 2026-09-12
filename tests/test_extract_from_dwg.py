@@ -11,12 +11,17 @@ import math
 
 import pytest
 
+import ezdxf
+
 from extract_from_dwg import (
     _clean_label,
+    _mitre_normal,
     _normalise,
     build_model,
     chain_segments,
+    load_thread_spacing,
     nearest_ground_level,
+    offset_threads,
     project_on_chain,
     snap_to_chains,
     waypoints_between,
@@ -224,3 +229,116 @@ def test_build_model_reports_where_each_ground_elevation_came_from():
     sources = {node["name"]: node["ground_source"] for node in placed}
     assert sources["A"].startswith("план")
     assert sources["B"] == "датасет"
+
+
+# --- разнос ниток по данным сечений (задача 26) ----------------------------
+#
+# В плане нитки не разделены: там одна осевая. Расстояние между ними задано на
+# листе сечений, где Т1 и Т2 подписаны отдельно и нарисованы окружностями.
+
+
+def make_section_doc(diameter: int = 426, spacing_mm: float = 800.0):
+    """Лист сечений в миниатюре: две подписи и две окружности труб."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    radius = diameter / 2
+    msp.add_text(f"Т1 Ø{diameter}х9,0").set_placement((0.0, 0.0))
+    msp.add_circle((0.0, -200.0), radius)
+    msp.add_text(f"Т2 Ø{diameter}х9,0").set_placement((spacing_mm, 0.0))
+    msp.add_circle((spacing_mm, -200.0), radius)
+    return doc
+
+
+def test_thread_spacing_is_read_from_the_section_sheet():
+    """Лист начерчен в миллиметрах — 800 мм между осями это 0.80 м."""
+    spacing = load_thread_spacing(make_section_doc(426, 800.0))
+
+    assert spacing == {426: 0.8}
+
+
+def test_thread_spacing_is_kept_per_diameter():
+    """У Ду 325 и Ду 426 расстояния разные, усреднять их нельзя."""
+    doc = make_section_doc(426, 800.0)
+    msp = doc.modelspace()
+    msp.add_text("Т1 Ø325х8,0").set_placement((0.0, 5000.0))
+    msp.add_circle((0.0, 4800.0), 162.5)
+    msp.add_text("Т2 Ø325х8,0").set_placement((700.0, 5000.0))
+    msp.add_circle((700.0, 4800.0), 162.5)
+
+    spacing = load_thread_spacing(doc)
+
+    assert spacing == {325: 0.7, 426: 0.8}
+
+
+def test_thread_spacing_is_empty_when_the_sheet_has_no_thread_labels():
+    """Без подписей Т1/Т2 расстояние не выдумывается."""
+    doc = ezdxf.new()
+    doc.modelspace().add_circle((0.0, 0.0), 213.0)
+
+    assert load_thread_spacing(doc) == {}
+
+
+def test_mitre_normal_is_a_unit_normal_on_a_straight_run():
+    normal = _mitre_normal((0.0, 0.0), (10.0, 0.0), (20.0, 0.0))
+
+    assert normal == pytest.approx((0.0, 1.0))
+
+
+def test_mitre_normal_lengthens_on_a_corner_so_the_offset_does_not_cut_it():
+    """На повороте 90° сдвиг по биссектрисе длиннее в 1/cos(45°) = 1.414 раза."""
+    normal = _mitre_normal((0.0, 0.0), (10.0, 0.0), (10.0, 10.0))
+
+    assert math.hypot(*normal) == pytest.approx(math.sqrt(2), rel=1e-6)
+
+
+def make_two_branch_model():
+    from pdf_to_ifc.model import NetworkEdge, NetworkNode, ThermalNetworkModel
+
+    model = ThermalNetworkModel(project_name="Нитки")
+    model.add_node(NetworkNode(name="A", x=0.0, y=0.0, z_surface=30.0,
+                               z_pipe_bottom=28.0, node_type="chamber"))
+    model.add_node(NetworkNode(name="B", x=100.0, y=0.0, z_surface=30.0,
+                               z_pipe_bottom=27.0, node_type="chamber"))
+    for branch in ("supply", "return"):
+        model.add_edge(NetworkEdge(
+            start_node="A", end_node="B", branch=branch, diameter=426, length=100.0,
+            material="Steel", insulation="PPU+PE", laying_type="underground_ducted",
+            waypoints=[(50.0, 0.0, 27.5)],
+        ))
+    return model
+
+
+def test_offset_threads_puts_branches_on_opposite_sides_of_the_axis():
+    separated = offset_threads(make_two_branch_model(), {426: 0.8})
+
+    supply = separated.nodes["A@supply"]
+    ret = separated.nodes["A@return"]
+
+    assert supply.y == pytest.approx(-0.4)
+    assert ret.y == pytest.approx(+0.4)
+    assert abs(supply.y - ret.y) == pytest.approx(0.8)  # паспортное расстояние
+
+
+def test_offset_threads_moves_waypoints_too():
+    """Иначе нитка разойдётся с осью только в узлах, а на изгибах сойдётся обратно."""
+    separated = offset_threads(make_two_branch_model(), {426: 0.8})
+
+    supply = next(e for e in separated.edges if e.branch == "supply")
+
+    assert supply.waypoints[0][1] == pytest.approx(-0.4)
+    assert supply.waypoints[0][2] == pytest.approx(27.5)  # отметка не трогается
+
+
+def test_offset_threads_keeps_the_model_unchanged_without_spacing():
+    """Нет данных из сечений — нет и разноса: выдумывать расстояние нельзя."""
+    model = make_two_branch_model()
+
+    assert offset_threads(model, {}) is model
+
+
+def test_offset_threads_falls_back_to_the_median_for_an_unknown_diameter():
+    model = make_two_branch_model()
+
+    separated = offset_threads(model, {325: 0.7})   # про Ду 426 сечения молчат
+
+    assert abs(separated.nodes["A@supply"].y - separated.nodes["A@return"].y) == pytest.approx(0.7)

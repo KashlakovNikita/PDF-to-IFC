@@ -515,6 +515,30 @@ def shift(lines: List[Centerline], offset: np.ndarray) -> List[Centerline]:
     ]
 
 
+def _format_point_distribution(
+    source: List[Centerline], target: List[Centerline], *, samples: int, tolerance: float
+) -> List[str]:
+    """Распределение отклонения по ВСЕМ точкам, а не по максимуму на участок.
+
+    Зачем отдельно от основного отчёта: основная метрика берёт максимум по
+    участку, и это правильно для приёмки — участок с одним плохим местом не
+    должен считаться хорошим. Но из-за этого не видно, как ведёт себя сеть в
+    целом: например, разведение ниток на паспортное расстояние сдвинуло медиану
+    по точкам с 0.350 до 0.002 м, а медиана максимумов по участкам при этом
+    почти не изменилась. Обе цифры нужны, и разными они бывают не от ошибки.
+    """
+    if not source or not target:
+        return []
+    points = np.vstack([line.sample(samples) for line in source])
+    distances = _distances_to_network(points, target)
+    return [
+        "Распределение по всем точкам (типичное отклонение, а не худшее на участок):",
+        f"  точек: {len(distances)}, медиана {np.median(distances):.3f} м, "
+        f"p75 {np.percentile(distances, 75):.3f} м, p95 {np.percentile(distances, 95):.3f} м",
+        f"  доля точек в пределах {tolerance} м: {(distances <= tolerance).mean() * 100:.1f}%",
+    ]
+
+
 def _format_direction(report: DirectionReport, *, worst: int) -> List[str]:
     deviations = report.deviations()
     lines = [
@@ -629,6 +653,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(line)
     print()
     for line in _format_direction(backward, worst=args.worst):
+        print(line)
+    print()
+    for line in _format_point_distribution(
+        generated, reference, samples=args.samples, tolerance=args.max_deviation
+    ):
         print(line)
     print()
     for line in _format_length_summary(generated, reference):
