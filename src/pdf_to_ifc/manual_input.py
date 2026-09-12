@@ -103,6 +103,15 @@ INT_FIELDS = {"diameter"}
 
 _PAIR_RE = re.compile(r"([^\s=]+)\s*=\s*(\"[^\"]*\"|'[^']*'|\S+)")
 
+# Чем заполняются текстовые атрибуты участка, если инженер их не указал.
+# Это ЗАГЛУШКИ, а не данные: модель требует эти поля непустыми, но знания за
+# ними нет. Названы отдельно, чтобы сборщик (pdf_to_ifc.assembly) мог отличить
+# их от настоящих значений и не принимать за расхождение источников.
+UNKNOWN_MATERIAL = "не указан"
+UNKNOWN_INSULATION = "не указана"
+UNKNOWN_LAYING_TYPE = "не указан"
+UNKNOWN_TEXT_VALUES = frozenset({UNKNOWN_MATERIAL, UNKNOWN_INSULATION, UNKNOWN_LAYING_TYPE})
+
 
 def _split_pairs(text: str, line_number: int, line: str, allowed: Dict[str, str]) -> Dict[str, str]:
     values: Dict[str, str] = {}
@@ -192,9 +201,9 @@ def parse_manual_text(text: str) -> ThermalNetworkModel:
             if missing:
                 raise ManualInputError(
                     line_number, line, f"у участка не хватает полей: {', '.join(missing)}")
-            values.setdefault("material", "не указан")
-            values.setdefault("insulation", "не указана")
-            values.setdefault("laying_type", "не указан")
+            values.setdefault("material", UNKNOWN_MATERIAL)
+            values.setdefault("insulation", UNKNOWN_INSULATION)
+            values.setdefault("laying_type", UNKNOWN_LAYING_TYPE)
             edges.append(NetworkEdge(
                 start_node=start_node, end_node=end_node, **values))  # type: ignore[arg-type]
             continue
